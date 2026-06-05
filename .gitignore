@@ -49,6 +49,7 @@ env/
 *.pfx
 *-secret.yaml
 *_secret.yaml
+secret.yaml
 
 # === 로그 ===
 captcha_logs/

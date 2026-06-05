@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: captcha-api
+  namespace: agami
+  labels:
+    app: captcha-api
+spec:
+  type: ClusterIP
+  selector:
+    app: captcha-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP

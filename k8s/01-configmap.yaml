@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: captcha-config
+  namespace: agami
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  REDIS_URL: "redis://redis:6379/0"
+  CORS_ORIGINS: "*"
+  DEFAULT_DIFFICULTY: "medium"
+  DEFAULT_RATE_LIMIT_PER_MIN: "60"

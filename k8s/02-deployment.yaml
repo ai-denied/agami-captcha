@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: captcha-api
+  namespace: agami
+  labels:
+    app: captcha-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: captcha-api
+  template:
+    metadata:
+      labels:
+        app: captcha-api
+    spec:
+      nodeSelector:
+        zone: gpu
+      imagePullSecrets:
+        - name: harbor-creds
+      containers:
+        - name: captcha-api
+          image: agami-captcha.cloud:8443/agami/captcha-api:v1.0.1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: captcha-config
+            - secretRef:
+                name: captcha-app-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
