@@ -22,7 +22,7 @@ spec:
       containers:
         - name: captcha-api
           image: agami-captcha.cloud:8443/agami/captcha-api:v1.0.1
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               name: http
