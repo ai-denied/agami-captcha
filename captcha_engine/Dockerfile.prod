@@ -22,11 +22,7 @@ WORKDIR /build
 COPY captcha-frontend/package.json captcha-frontend/package-lock.json* ./
 
 # package-lock.json 이 있으면 npm ci, 없으면 npm install. (lock 부재 시에도 빌드 가능)
-RUN if [ -f package-lock.json ]; then \
-      npm ci --no-audit --no-fund ; \
-    else \
-      npm install --no-audit --no-fund ; \
-    fi
+RUN npm install --no-audit --no-fund
 
 # 나머지 소스 복사 후 widget 빌드 (base=/widget/, BrowserRouter basename=/widget)
 COPY captcha-frontend/ ./
