@@ -31,6 +31,12 @@ spec:
                 name: captcha-config
             - secretRef:
                 name: captcha-app-secret
+          env:
+          - name: JWT_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: agami-env-secret
+                key: JWT_SECRET_KEY
           resources:
             requests:
               cpu: "500m"
