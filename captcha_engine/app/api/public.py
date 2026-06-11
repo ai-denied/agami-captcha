@@ -34,7 +34,7 @@ from app.captcha.face_generator import generate_face_challenge
 from app.captcha.flashlight_generator import generate_flashlight_challenge
 from app.captcha.flashlight_model import FlashlightModel
 from app.captcha.captcha_logger import schedule_attempt_log, schedule_mlops_logs
-from app.captcha.flashlight_policy import evaluate_flashlight_decision
+from app.captcha.flashlight_policy import HIGH_RISK_THRESHOLD, evaluate_flashlight_decision
 from app.captcha.mlops_formatter import to_training_sessions
 from app.captcha.mouse_features import extract_features_for_model
 from app.captcha.verifier import (
@@ -111,6 +111,11 @@ async def issue_challenge(
         spec, answer = generate_context_challenge(difficulty)
         variant_value = None
 
+    # 소유 체인: api_keys → challenges. 검증 단계는 Challenge ORM 을 로드하지 않고
+    # Redis answer 만 GETDEL 하므로, owner_user_id 를 answer 페이로드에도 실어둔다
+    # (검증 시 추가 DB 쿼리 0). 현재 api_key.owner_user_id 는 JWT 미들웨어 부재로 None.
+    answer.owner_user_id = api_key.owner_user_id
+
     # Hot path: 정답을 Redis 에 저장 (TTL = time_limit + 10s)
     await store.save_answer(answer)
 
@@ -126,6 +131,7 @@ async def issue_challenge(
         expires_at=spec.expires_at,
         requester_ip=request.client.host if request.client else None,
         requester_origin=request.headers.get("origin"),
+        owner_user_id=api_key.owner_user_id,
     ))
     await db.commit()
 
@@ -213,6 +219,12 @@ async def submit_answer(
         time_taken_ms=body.behavioral_data.time_taken_ms if body.behavioral_data else None,
         behavioral_summary=behavioral_summary,
         requester_ip=request.client.host if request.client else None,
+        # 소유 체인 + 종류 라벨을 challenge(=consume_answer 결과)에서 복사.
+        owner_user_id=answer.owner_user_id,
+        kind=answer.kind.value,
+        # face/context 단순 미스에는 모델 점수·좌표·궤적 같은 매핑 가능한 봇 신호가
+        # 없으므로 attack_type 은 None (= 매핑 불가). 손전등 번들 경로에서만 라벨링.
+        attack_type=None,
     ))
     await db.commit()
 
@@ -322,6 +334,27 @@ async def _flashlight_submit_bundle(
     })
     verdict = "human" if decision == "allow" else "bot"
     confidence = max(scores) if scores else 0.0
+
+    # 차단(success=false) 시 공격 유형 라벨 부여. scores 는 bot_risk_score(높을수록 봇)
+    # 이므로 위험 방향은 score >= HIGH_RISK_THRESHOLD. evaluate_flashlight_decision 의
+    # block 분기(① 고위험 점수 1장 이상 OR ② 좌표 hit < 2)에 그대로 매핑한다.
+    #   - 모델이 위험 방향 → 'model_high_risk'
+    #   - 좌표 부족 + 궤적 자체가 없음 → 'no_trajectory'
+    #   - 좌표 부족(궤적은 있음) → 'coordinate_brute'
+    # velocity_anomaly/rate_abuse 는 이 핸들러에 전용 분기가 없어(속도는 모델 점수에
+    # 흡수, 레이트 초과는 429 로 선차단되어 행 자체가 안 생김) 매핑 대상 아님.
+    has_any_trajectory = any(
+        s.trajectory and len(s.trajectory) >= 2 for s in submissions
+    )
+    attack_type: str | None = None
+    if decision == "block":
+        if any(s >= HIGH_RISK_THRESHOLD for s in scores):
+            attack_type = "model_high_risk"
+        elif not has_any_trajectory:
+            attack_type = "no_trajectory"
+        else:
+            attack_type = "coordinate_brute"
+
     db.add(Verification(
         challenge_id=challenge_id,
         tenant_id=api_key.tenant_id,
@@ -331,6 +364,10 @@ async def _flashlight_submit_bundle(
         time_taken_ms=body.behavioral_data.time_taken_ms if body.behavioral_data else None,
         behavioral_summary=behavioral_summary,
         requester_ip=request.client.host if request.client else None,
+        # 소유 체인 + 종류 라벨을 challenge(=consume_answer 결과)에서 복사.
+        owner_user_id=answer.owner_user_id,
+        kind=answer.kind.value,
+        attack_type=attack_type,
     ))
     await db.commit()
 

@@ -13,7 +13,7 @@ import { issueChallenge, submitAnswer } from '../api/captchaApi';
 //   face_mission → { completed_instructions, face_behavioral_data }
 // =============================================================================
 
-export function useCaptcha({ kind = 'flashlight', difficulty = null } = {}) {
+export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey } = {}) {
   const [status, setStatus] = useState('idle'); // idle|loading|active|success|fail
   const [spec, setSpec] = useState(null);
   const [token, setToken] = useState(null);
@@ -29,7 +29,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null } = {}) {
     setSpec(null);
     setToken(null);
 
-    const res = await issueChallenge(kind, difficulty);
+    const res = await issueChallenge(kind, difficulty, clientKey);
     if (!res.ok) {
       setError(res.error);
       setStatus('fail');
@@ -40,7 +40,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null } = {}) {
     setRemainingSec(s.time_limit_sec);
     startedAtRef.current = Date.now();
     setStatus('active');
-  }, [kind, difficulty]);
+  }, [kind, difficulty, clientKey]);
 
   const reset = useCallback(() => {
     setStatus('idle');
@@ -68,7 +68,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null } = {}) {
         },
       };
 
-      const res = await submitAnswer(spec.challenge_id, enriched);
+      const res = await submitAnswer(spec.challenge_id, enriched, clientKey);
       if (res.ok) {
         // 손전등 캡챠는 200 OK 본문에 decision='block' 로 차단을 전달한다.
         // decision 필드가 없는 다른 캡챠는 기존 success 분기로 진입.
@@ -84,7 +84,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null } = {}) {
         setStatus('fail');
       }
     },
-    [spec, status],
+    [spec, status, clientKey],
   );
 
   // 타이머: 1초마다 카운트다운, 0 도달 시 자동 fail.

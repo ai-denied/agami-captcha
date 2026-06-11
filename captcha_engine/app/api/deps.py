@@ -10,8 +10,10 @@ WBS #43: HTTP 핸들러가 주입받는 공통 의존성.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 
+import jwt
 import redis.asyncio as redis_async
 from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import select
@@ -31,6 +33,8 @@ from app.cache.redis_client import get_redis_client
 from app.core.config import get_settings
 from app.db.models import AllowedOrigin, ApiKey, TenantSettings
 from app.db.session import get_sessionmaker
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -165,3 +169,76 @@ async def enforce_rate_limit(
         )
 
     return api_key
+
+
+# ---------------------------------------------------------------------------
+# 로그인 사용자 JWT 인증 (agamidb 발급 HS256)
+# ---------------------------------------------------------------------------
+# ⚠️ 이건 전역 미들웨어가 아니라 "로그인 사용자 전용 라우트"에만 선택 적용하는
+#    FastAPI 의존성이다. 기존 client_key 기반 siteverify/발급/검증 플로우와 완전히
+#    분리되어 있으며, 그쪽 인증(verify_client_key/enforce_rate_limit)은 건드리지 않는다.
+#
+# 토큰 전달: Authorization 헤더가 아니라 'accessToken' HttpOnly 쿠키.
+#           (캡챠와 로그인 앱이 same-origin 이라 요청에 자동 첨부됨.)
+# payload: sub=str(user.id), nickname, exp. iss/aud 없음.
+
+async def get_current_user_id(request: Request) -> int:
+    """accessToken 쿠키의 JWT 를 검증하고 user.id(int)를 반환.
+
+    실패 정책:
+      - JWT_SECRET_KEY 미설정 → 503 (앱은 기동되지만 이 의존성만 비활성).
+      - 쿠키 없음 / 만료 / 서명오류 / 디코드오류 / sub 변환 실패 → 모두 401.
+        상세 사유는 로그에만 남기고 응답 본문에는 노출하지 않는다.
+    """
+    settings = get_settings()
+
+    if not settings.jwt_secret_key:
+        # 전역 크래시 금지: 키가 주입 안 된 환경에서도 앱 자체는 살아있어야 한다.
+        logger.error(
+            "JWT_SECRET_KEY 미설정 — accessToken 검증 불가. (env 주입 여부 확인 필요)"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "auth_unavailable",
+                "message": "Authentication is temporarily unavailable.",
+            },
+        )
+
+    token = request.cookies.get("accessToken")
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "missing_access_token", "message": "Authentication required."},
+        )
+
+    # algorithms 를 명시적으로 고정 — alg 혼동/none 공격 차단 (필수).
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except jwt.ExpiredSignatureError:
+        logger.info("accessToken 만료")
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "invalid_token", "message": "Authentication required."},
+        )
+    except jwt.InvalidTokenError as exc:
+        # 서명오류/디코드오류/형식오류 등 모든 PyJWT 검증 실패의 상위 예외.
+        logger.info("accessToken 검증 실패: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "invalid_token", "message": "Authentication required."},
+        )
+
+    sub = payload.get("sub")
+    try:
+        return int(sub)
+    except (TypeError, ValueError):
+        logger.info("accessToken sub 정수 변환 실패: %r", sub)
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "invalid_token", "message": "Authentication required."},
+        )

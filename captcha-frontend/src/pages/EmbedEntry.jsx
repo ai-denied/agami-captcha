@@ -22,6 +22,16 @@ import CaptchaRouter from '../components/CaptchaRouter';
 // =============================================================================
 
 const ALLOWED_KINDS = ['flashlight', 'face_mission', 'context_inference'];
+
+// client_key(site_key) 형식 검증 — 접두어/비어있음 수준까지만.
+// 실제 키 유효성은 백엔드 verify_client_key 에 맡긴다(중복 검증 금지).
+//   - 회원 발급 키: agami_site_...
+//   - 개발/테스트 폴백 키: ck_...
+const CLIENT_KEY_PREFIXES = ['agami_site_', 'ck_'];
+function isValidClientKeyFormat(value) {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  return CLIENT_KEY_PREFIXES.some((p) => value.startsWith(p));
+}
 // 'normal' 은 사용자 친화 별칭. 백엔드는 medium 만 인식.
 const DIFFICULTY_MAP = {
   easy: 'easy',
@@ -55,17 +65,27 @@ export default function EmbedEntry() {
   const rawDiff = (searchParams.get('difficulty') ?? 'easy').toLowerCase();
   const difficulty = DIFFICULTY_MAP[rawDiff] ?? 'easy';
 
-  const { status, spec, token, error, start, submit } = useCaptcha({ kind, difficulty });
+  // client_key 주입:
+  //   - 파라미터가 '아예 없으면'(null) 에러 없이 .env 폴백 → useCaptcha 에 undefined 전달.
+  //   - 파라미터가 '존재하는데' 형식이 틀리면(빈 문자열/접두어 불일치) 명확한 에러 표시.
+  //   - 우선순위: URL client_key > VITE_CAPTCHA_CLIENT_KEY > 'ck_test' (captchaApi.buildHeaders).
+  const rawClientKey = searchParams.get('client_key'); // 없으면 null
+  const clientKeyProvided = rawClientKey !== null;
+  const clientKeyFormatInvalid = clientKeyProvided && !isValidClientKeyFormat(rawClientKey);
+  const clientKey = clientKeyProvided ? rawClientKey : undefined;
+
+  const { status, spec, token, error, start, submit } = useCaptcha({ kind, difficulty, clientKey });
 
   // 첫 마운트 시 자동 시작 — idle → loading → active 자동 전환
   const startedRef = useRef(false);
   useEffect(() => {
     if (startedRef.current) return;
+    if (clientKeyFormatInvalid) return; // 잘못된 키면 챌린지 발급 자체를 막는다.
     if (status === 'idle') {
       startedRef.current = true;
       start();
     }
-  }, [status, start]);
+  }, [status, start, clientKeyFormatInvalid]);
 
   // status 종료 시 단 한 번 postMessage 발신
   const sentRef = useRef(false);
@@ -86,6 +106,28 @@ export default function EmbedEntry() {
     sentRef.current = false;
     start();
   };
+
+  // client_key 파라미터가 존재하지만 형식이 틀린 경우: 챌린지 발급 없이 명확한 에러만 표시.
+  if (clientKeyFormatInvalid) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8">
+        <div className="mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">
+              ❌
+            </div>
+            <div>
+              <div className="text-lg font-bold text-[#1d2a44]">잘못된 사이트 키</div>
+              <div className="text-xs text-[#6b7891]">
+                임베드 URL 의 client_key 형식이 올바르지 않습니다.
+                <span className="text-rose-500 ml-1">(invalid_client_key_format)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8">

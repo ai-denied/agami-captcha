@@ -7,12 +7,18 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const BASE_URL = API_BASE_URL;
-const CLIENT_KEY = import.meta.env.VITE_CAPTCHA_CLIENT_KEY || 'ck_test';
 
-const COMMON_HEADERS = {
-  'Content-Type': 'application/json',
-  'X-Captcha-Client-Key': CLIENT_KEY,
-};
+// 폴백 기본값 (URL 주입 client_key 가 없을 때만 사용).
+const FALLBACK_CLIENT_KEY = import.meta.env.VITE_CAPTCHA_CLIENT_KEY || 'ck_test';
+
+// 헤더는 모듈 상수로 박제하지 않고 호출 시점에 구성한다.
+// 우선순위: 인자 clientKey > VITE_CAPTCHA_CLIENT_KEY > 'ck_test'.
+function buildHeaders(clientKey) {
+  return {
+    'Content-Type': 'application/json',
+    'X-Captcha-Client-Key': clientKey || FALLBACK_CLIENT_KEY,
+  };
+}
 
 async function parseError(res) {
   // 백엔드 error 포맷: { error: { code, message, request_id } }
@@ -29,13 +35,14 @@ async function parseError(res) {
  * 챌린지 발급.
  * @param {('flashlight'|'face_mission'|'context_inference')} kind
  * @param {('easy'|'medium'|'hard'|null)} difficulty
+ * @param {string} [clientKey] 임베드 시 주입된 site_key. 없으면 .env 폴백.
  * @returns {Promise<{ ok: true, data: object } | { ok: false, error: object }>}
  */
-export async function issueChallenge(kind = 'flashlight', difficulty = null) {
+export async function issueChallenge(kind = 'flashlight', difficulty = null, clientKey) {
   try {
     const res = await fetch(`${BASE_URL}/v1/challenges`, {
       method: 'POST',
-      headers: COMMON_HEADERS,
+      headers: buildHeaders(clientKey),
       body: JSON.stringify({ kind, difficulty }),
     });
     if (!res.ok) return { ok: false, error: await parseError(res) };
@@ -53,15 +60,16 @@ export async function issueChallenge(kind = 'flashlight', difficulty = null) {
  *
  * @param {string} challengeId
  * @param {object} payload
+ * @param {string} [clientKey] 임베드 시 주입된 site_key. 없으면 .env 폴백.
  * @returns {Promise<{ ok: true, data: { captcha_token, expires_in } } | { ok: false, error: object }>}
  */
-export async function submitAnswer(challengeId, payload) {
+export async function submitAnswer(challengeId, payload, clientKey) {
   try {
     const res = await fetch(
       `${BASE_URL}/v1/challenges/${encodeURIComponent(challengeId)}/answer`,
       {
         method: 'POST',
-        headers: COMMON_HEADERS,
+        headers: buildHeaders(clientKey),
         body: JSON.stringify(payload ?? {}),
       },
     );

@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # Firebase Admin SDK credentials (service account JSON 경로 또는 inline JSON)
     firebase_credentials_path: str | None = Field(default=None)
 
+    # agamidb 가 발급한 로그인 사용자 JWT(HS256) 검증용. agamidb 와 공유하는 비밀키.
+    # 캡챠 파드에는 agami-env-secret 의 secretKeyRef(JWT_SECRET_KEY)로 주입됨.
+    # 미설정(None)이어도 앱은 기동하고, get_current_user_id 의존성 호출 시에만 503.
+    jwt_secret_key: str | None = Field(default=None)
+    # 디코드 시 허용할 알고리즘. HS256 고정 (alg 혼동/none 공격 차단).
+    jwt_algorithm: str = Field(default="HS256")
+
     # -----------------------------------------------------------------------
     # 캡챠 동작 정책
     # -----------------------------------------------------------------------

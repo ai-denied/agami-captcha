@@ -120,6 +120,9 @@ class ApiKey(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 소유 체인의 출발점 (api_keys → challenges → verifications).
+    # TODO: JWT 검증 미들웨어 합류 전까지 키 발급 경로가 채우지 못하므로 당분간 None.
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         Index("idx_api_keys_tenant_id", "tenant_id"),
@@ -202,6 +205,8 @@ class Challenge(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     requester_ip: Mapped[Any | None] = mapped_column(INET)
     requester_origin: Mapped[str | None] = mapped_column(String(255))
+    # api_keys.owner_user_id 에서 복사 (발급 시점). 현재는 항상 None.
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         Index("idx_challenges_tenant_issued", "tenant_id", "issued_at"),
@@ -232,6 +237,12 @@ class Verification(Base):
     behavioral_summary: Mapped[dict | None] = mapped_column(JSONB)
     requester_ip: Mapped[Any | None] = mapped_column(INET)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    # 소유 체인: challenges.owner_user_id 에서 복사. 현재는 항상 None.
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 이 검증이 어떤 캡챠 종류였는지 (challenge.kind 복사). 대시보드 종류별 집계용.
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 차단(success=false) 시 부여하는 공격 유형 라벨. 매핑 불가하면 None.
+    attack_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
         CheckConstraint("verdict IN ('human', 'bot', 'uncertain')", name="ck_verifications_verdict"),

@@ -48,7 +48,9 @@ CREATE TABLE api_keys (
     secret_hash     VARCHAR(128)  NOT NULL,
     last_used_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    revoked_at      TIMESTAMPTZ
+    revoked_at      TIMESTAMPTZ,
+    -- 소유 체인 출발점. JWT 검증 미들웨어 도입 전까지 발급 경로가 못 채워 당분간 NULL.
+    owner_user_id   INTEGER
 );
 CREATE INDEX idx_api_keys_tenant_id ON api_keys(tenant_id);
 -- client_key UNIQUE 제약은 자동으로 인덱스 생성. 별도 인덱스 불필요.
@@ -94,7 +96,9 @@ CREATE TABLE challenges (
     issued_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     expires_at          TIMESTAMPTZ   NOT NULL,
     requester_ip        INET,
-    requester_origin    VARCHAR(255)
+    requester_origin    VARCHAR(255),
+    -- api_keys.owner_user_id 에서 발급 시점에 복사.
+    owner_user_id       INTEGER
 );
 -- 대시보드: 시간대별 트래픽, 캡챠 종류별 발급량
 CREATE INDEX idx_challenges_tenant_issued ON challenges(tenant_id, issued_at DESC);
@@ -115,7 +119,12 @@ CREATE TABLE verifications (
     ai_model_score      NUMERIC(4, 3),
     behavioral_summary  JSONB,
     requester_ip        INET,
-    created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    -- challenges.owner_user_id / kind 에서 복사 (소유 체인 + 종류별 집계).
+    owner_user_id       INTEGER,
+    kind                VARCHAR(32),
+    -- 차단(success=false) 시 공격 유형 라벨. 매핑 불가하면 NULL.
+    attack_type         VARCHAR(32)
 );
 -- 성공률 그래프
 CREATE INDEX idx_verifications_tenant_created ON verifications(tenant_id, created_at DESC);

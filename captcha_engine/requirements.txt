@@ -6,6 +6,9 @@ sqlalchemy>=2.0
 asyncpg>=0.29
 redis>=5.0
 firebase-admin>=6.0
+# 로그인 사용자 accessToken(JWT, HS256) 검증용. firebase-admin 이 전이 의존성으로
+# 끌어오지만(현재 2.13), 직접 import 하므로 명시적으로 선언.
+PyJWT>=2.0
 python-multipart>=0.0.9
 asyncpg
 psycopg2-binary

@@ -185,6 +185,9 @@ class FlashlightChallengeAnswer(BaseModel):
     time_limit_sec: int = Field(default=0, description="로그용 메타.")
     canvas_aspect_w: int = Field(default=0, description="로그용 메타.")
     canvas_aspect_h: int = Field(default=0, description="로그용 메타.")
+    # 소유 체인 전달용. 발급 시 api_key.owner_user_id 를 실어두고, 검증 시
+    # consume_answer 결과에서 꺼내 verifications.owner_user_id 로 복사 (추가 DB 쿼리 0).
+    owner_user_id: int | None = Field(default=None, description="소유 체인 전달용 메타.")
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +257,8 @@ class FaceChallengeAnswer(BaseModel):
     )
     created_at: datetime
     expires_at: datetime
+    # 소유 체인 전달용 메타. 발급 시 api_key.owner_user_id 를 실어둠.
+    owner_user_id: int | None = Field(default=None, description="소유 체인 전달용 메타.")
 
 
 # ---------------------------------------------------------------------------
@@ -320,3 +325,5 @@ class ContextChallengeAnswer(BaseModel):
     )
     created_at: datetime
     expires_at: datetime
+    # 소유 체인 전달용 메타. 발급 시 api_key.owner_user_id 를 실어둠.
+    owner_user_id: int | None = Field(default=None, description="소유 체인 전달용 메타.")
