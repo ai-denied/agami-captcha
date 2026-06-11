@@ -2,8 +2,10 @@ name: engine CI
 on:
   push:
     branches: [ "main" ]
-    paths: ['captcha_engine/**']
-  workflow_dispatch: 
+    paths:
+      - 'captcha_engine/**'
+      - 'captcha-frontend/**'   # 이미지에 위젯이 포함되므로 프론트 변경도 트리거 필요
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,7 +26,10 @@ jobs:
       - name: Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: ./captcha_engine
+          context: .                              # ← 레포 루트로 변경 (핵심 수정)
           file: ./captcha_engine/Dockerfile.prod
+          platforms: linux/amd64
+          provenance: false                       # M3 수동 빌드 때와 동일 조건
+          sbom: false
           push: true
           tags: ${{ secrets.HARBOR_URL }}/agami/captcha-api:${{ env.IMAGE_TAG }}
