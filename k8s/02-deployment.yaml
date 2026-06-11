@@ -60,3 +60,11 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
+          volumeMounts:
+            - name: mlops-data
+              mountPath: /app/captcha_logs/mlops
+      volumes:
+        - name: mlops-data
+          hostPath:
+            path: /home/ubuntu/agami-mlops/data/flashlight/raw/mouse_logs/static/human
+            type: Directory
