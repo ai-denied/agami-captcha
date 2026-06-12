@@ -66,5 +66,5 @@ spec:
       volumes:
         - name: mlops-data
           hostPath:
-            path: /home/ubuntu/agami-mlops/data/flashlight/raw/mouse_logs/static/human
+            path: /home/ubuntu/data/flashlight/raw/mouse_logs/static/human
             type: Directory
