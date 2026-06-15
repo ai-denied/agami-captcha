@@ -56,8 +56,6 @@ captcha_logs/
 *.log
 
 # === 캡챠 데이터셋 (Git 미포함 / Docker 빌드 시 별도 배치) ===
-captcha_engine/app/static/captcha_images/
-captcha_engine/app/static/captcha_labels/
 
 # === 빌드 산출물 ===
 captcha_engine/static/widget/
