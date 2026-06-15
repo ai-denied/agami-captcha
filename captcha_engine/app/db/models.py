@@ -56,6 +56,8 @@ class Tenant(Base):
         String(32), nullable=False, default="free"
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 새로 추가된 웹 서버 유저 연결 고리
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -71,7 +73,6 @@ class Tenant(Base):
     )
 
     # 관계 (선택 사항: 자주 같이 조회되면 lazy="select" 가 기본)
-    users: Mapped[list["TenantUser"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     settings: Mapped["TenantSettings | None"] = relationship(
         back_populates="tenant", uselist=False, cascade="all, delete-orphan"
@@ -79,31 +80,7 @@ class Tenant(Base):
 
 
 # ---------------------------------------------------------------------------
-# 2. TenantUser
-# ---------------------------------------------------------------------------
-
-class TenantUser(Base):
-    __tablename__ = "tenant_users"
-
-    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
-    )
-    firebase_uid: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    email: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(16), nullable=False, default="admin")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-    __table_args__ = (
-        CheckConstraint("role IN ('owner', 'admin', 'viewer')", name="ck_tenant_users_role"),
-        Index("idx_tenant_users_tenant_id", "tenant_id"),
-    )
-
-    tenant: Mapped[Tenant] = relationship(back_populates="users")
-
-
-# ---------------------------------------------------------------------------
-# 3. ApiKey
+# 2. ApiKey
 # ---------------------------------------------------------------------------
 
 class ApiKey(Base):
@@ -132,7 +109,7 @@ class ApiKey(Base):
 
 
 # ---------------------------------------------------------------------------
-# 4. AllowedOrigin
+# 3. AllowedOrigin
 # ---------------------------------------------------------------------------
 
 class AllowedOrigin(Base):
@@ -141,6 +118,10 @@ class AllowedOrigin(Base):
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    # 새로 추가된 API 키 단위 도메인 관리 고리
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=True
     )
     origin: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
@@ -152,7 +133,7 @@ class AllowedOrigin(Base):
 
 
 # ---------------------------------------------------------------------------
-# 5. TenantSettings
+# 4. TenantSettings
 # ---------------------------------------------------------------------------
 
 class TenantSettings(Base):
@@ -181,7 +162,7 @@ class TenantSettings(Base):
 
 
 # ---------------------------------------------------------------------------
-# 6. Challenge (audit log)
+# 5. Challenge (audit log)
 # ---------------------------------------------------------------------------
 
 class Challenge(Base):
@@ -215,7 +196,7 @@ class Challenge(Base):
 
 
 # ---------------------------------------------------------------------------
-# 7. Verification (대시보드 통계의 원천)
+# 6. Verification (대시보드 통계의 원천)
 # ---------------------------------------------------------------------------
 
 class Verification(Base):

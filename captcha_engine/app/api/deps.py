@@ -1,13 +1,3 @@
-"""
-FastAPI Dependencies
-====================
-WBS #43: HTTP 핸들러가 주입받는 공통 의존성.
-
-- get_db / get_redis / get_store : 인프라 자원
-- verify_client_key : X-Captcha-Client-Key 헤더 검증
-- verify_origin    : Origin 헤더가 tenant 의 allowed_origins 에 있는지 검증
-"""
-
 from __future__ import annotations
 
 import logging
@@ -87,16 +77,16 @@ async def verify_origin(
     db: AsyncSession = Depends(get_db),
 ) -> ApiKey:
     """
-    Origin 헤더가 tenant 의 allowed_origins 화이트리스트에 있는지 확인.
+    Origin 헤더가 해당 api_key(프로젝트)의 allowed_origins 화이트리스트에 있는지 확인.
     Origin 이 없는 요청 (서버-서버, curl 테스트 등) 은 통과.
-    프로덕션에서는 정책에 따라 강제할 수 있음.
     """
     origin = request.headers.get("origin")
     if not origin:
         return api_key
 
+    # 수정됨: tenant_id가 아닌 api_key_id를 기준으로 정확한 프로젝트 도메인 검증
     stmt = select(AllowedOrigin).where(
-        AllowedOrigin.tenant_id == api_key.tenant_id,
+        AllowedOrigin.api_key_id == api_key.id,
         AllowedOrigin.origin == origin,
     )
     if (await db.execute(stmt)).scalar_one_or_none() is None:
@@ -104,7 +94,7 @@ async def verify_origin(
             status_code=403,
             detail={
                 "code": "origin_not_allowed",
-                "message": f"Origin {origin} is not in this tenant's allowed list.",
+                "message": f"Origin {origin} is not allowed for this site key.",
             },
         )
     return api_key
