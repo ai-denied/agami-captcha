@@ -10,3 +10,7 @@ data:
   CORS_ORIGINS: "*"
   DEFAULT_DIFFICULTY: "medium"
   DEFAULT_RATE_LIMIT_PER_MIN: "60"
+  # 손전등 봇 위험도 추론 마이크로서비스 (agami ns, port 80). deployment 가
+  # envFrom: configMapRef 로 자동 주입(case-insensitive → Settings.inference_api_url).
+  INFERENCE_API_URL: "http://flashlight-inference-api-svc"
+  INFERENCE_TIMEOUT_SEC: "5.0"

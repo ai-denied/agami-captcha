@@ -76,6 +76,15 @@ class Settings(BaseSettings):
     default_rate_limit_per_min: int = Field(default=60)
 
     # -----------------------------------------------------------------------
+    # 손전등 추론 마이크로서비스 (flashlight-inference-api-svc)
+    # -----------------------------------------------------------------------
+    # 봇 위험도 추론을 컨테이너 내부 ONNX 대신 같은 클러스터의 HTTP 서비스로 위임.
+    # K8s 에서는 captcha-config ConfigMap 의 INFERENCE_API_URL 로 주입(case-insensitive).
+    inference_api_url: str = Field(default="http://flashlight-inference-api-svc")
+    # 추론 API 호출 타임아웃(초). 초과 시 fail-closed(block).
+    inference_timeout_sec: float = Field(default=5.0)
+
+    # -----------------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------------
     # 콤마로 구분된 origin 문자열. K8s ConfigMap 에서 한 줄로 주입하기 쉽게 string.

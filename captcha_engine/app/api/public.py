@@ -32,11 +32,14 @@ from app.captcha.challenge_types import (
 from app.captcha.context_generator import generate_context_challenge
 from app.captcha.face_generator import generate_face_challenge
 from app.captcha.flashlight_generator import generate_flashlight_challenge
-from app.captcha.flashlight_model import FlashlightModel
 from app.captcha.captcha_logger import schedule_attempt_log, schedule_mlops_logs
 from app.captcha.flashlight_policy import HIGH_RISK_THRESHOLD, evaluate_flashlight_decision
+from app.captcha.inference_client import (
+    InferenceUnavailable,
+    predict_scores,
+    scale_trajectory_to_training,
+)
 from app.captcha.mlops_formatter import to_training_sessions
-from app.captcha.mouse_features import extract_features_for_model
 from app.captcha.verifier import (
     baseline_verdict,
     check_context_hit,
@@ -259,6 +262,19 @@ async def submit_answer(
 # 2-a. Flashlight Bundle helper — 1챌린지 = 3장 묶음 일괄 평가
 # ---------------------------------------------------------------------------
 
+# 손전등 risk band 라벨 (정책 무관, 로그/응답 정보용). 기존 FlashlightModel.classify 와
+# 동일 임계값: low=0.05, high=HIGH_RISK_THRESHOLD(onnx_export_info.json 에서 로드됨).
+_LOW_RISK_THRESHOLD: float = 0.05
+
+
+def _classify_risk_band(score: float) -> str:
+    if score < _LOW_RISK_THRESHOLD:
+        return "low_risk"
+    if score < HIGH_RISK_THRESHOLD:
+        return "suspicious"
+    return "high_risk"
+
+
 async def _flashlight_submit_bundle(
     *,
     challenge_id: str,
@@ -294,35 +310,51 @@ async def _flashlight_submit_bundle(
     submissions = sorted(submissions, key=lambda s: s.index)
     sub_answers = sorted(answer.sub_answers, key=lambda a: a.index)
 
-    coord_hits: list[bool] = []
-    scores: list[float] = []
-    risk_bands: list[str] = []
+    coord_hits: list[bool] = [
+        check_flashlight_hit(sub_answer, submission.click_x, submission.click_y)
+        for sub_answer, submission in zip(sub_answers, submissions)
+    ]
 
-    for sub_answer, submission in zip(sub_answers, submissions):
-        coord_hit = check_flashlight_hit(sub_answer, submission.click_x, submission.click_y)
-        coord_hits.append(coord_hit)
-
-        score: float = 0.0
-        risk_band: str = "low_risk"
-        if submission.trajectory and len(submission.trajectory) >= 2:
-            try:
-                dynamic, static = extract_features_for_model(submission.trajectory)
-                model = FlashlightModel.get_instance()
-                score = model.predict(dynamic, static)
-                risk_band = model.classify(score)
-            except ValueError as e:
-                logger.info(
-                    "flashlight trajectory invalid sub=%d: %s", submission.index, e
+    # 봇 위험도 추론: 컨테이너 내부 ONNX → 추론 마이크로서비스 HTTP 호출(옵션 A).
+    # /api/v1/predict 만 3회 동시 호출하고, 최종 allow/block 은 기존 정책이 담당.
+    # fail-closed: 빈 trajectory / canvas dims 누락 / 추론 API 장애 → 해당 캡챠 block.
+    fail_reason: str | None = None
+    try:
+        scaled_trajectories: list[list[dict]] = []
+        for submission in submissions:
+            if not submission.trajectory or len(submission.trajectory) < 2:
+                raise InferenceUnavailable(reason="empty_trajectory")
+            if (
+                not submission.canvas_width
+                or not submission.canvas_height
+                or submission.canvas_width <= 0
+                or submission.canvas_height <= 0
+            ):
+                # canvas dims 없으면 800x600 정확 환산 불가 → 추정 금지, fail-closed.
+                raise InferenceUnavailable(reason="missing_canvas_dims")
+            scaled_trajectories.append(
+                scale_trajectory_to_training(
+                    submission.trajectory,
+                    submission.canvas_width,
+                    submission.canvas_height,
                 )
-            except Exception:
-                logger.exception(
-                    "flashlight model inference failed sub=%d; treat low_risk",
-                    submission.index,
-                )
-        scores.append(float(score))
-        risk_bands.append(risk_band)
-
-    decision = evaluate_flashlight_decision(scores, coord_hits)
+            )
+        scores = await predict_scores(scaled_trajectories)
+        risk_bands = [_classify_risk_band(s) for s in scores]
+        decision = evaluate_flashlight_decision(scores, coord_hits)
+    except InferenceUnavailable as e:
+        fail_reason = e.reason
+        logger.warning(
+            "flashlight inference fail-closed block: reason=%s challenge_id=%s",
+            e.reason,
+            challenge_id,
+        )
+        # 모델 점수 없음 → 0.0/"blocked" sentinel 로 채워 로그/응답 길이 유지.
+        # risk_band="blocked" + attack_type=fail_reason 로 fail-closed 임을 명시.
+        # decision 은 정책 우회하여 block.
+        scores = [0.0] * len(submissions)
+        risk_bands = ["blocked"] * len(submissions)
+        decision = "block"
 
     # Verification 1행 기록 (번들 단위)
     behavioral_summary = body.behavioral_data.model_dump() if body.behavioral_data else {}
@@ -348,7 +380,10 @@ async def _flashlight_submit_bundle(
     )
     attack_type: str | None = None
     if decision == "block":
-        if any(s >= HIGH_RISK_THRESHOLD for s in scores):
+        if fail_reason is not None:
+            # fail-closed(빈 trajectory / canvas dims 누락 / 추론 API 장애)로 인한 차단.
+            attack_type = fail_reason
+        elif any(s >= HIGH_RISK_THRESHOLD for s in scores):
             attack_type = "model_high_risk"
         elif not has_any_trajectory:
             attack_type = "no_trajectory"
