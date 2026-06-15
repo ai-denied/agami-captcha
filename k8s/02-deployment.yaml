@@ -21,7 +21,7 @@ spec:
         - name: harbor-creds
       containers:
         - name: captcha-api
-          image: agami-captcha.cloud:8443/agami/captcha-api:v1.0.4
+          image: agami-captcha.cloud:8443/agami/captcha-api:2606151150
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
