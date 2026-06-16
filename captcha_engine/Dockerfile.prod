@@ -28,6 +28,12 @@ RUN npm install --no-audit --no-fund
 COPY captcha-frontend/ ./
 RUN WIDGET_BUILD=1 npm run build
 
+# loader.js (script-tag 임베드 래퍼) 빌드 — 반드시 위젯 build '다음'.
+# vite.loader.config.js 는 emptyOutDir:false 라 위젯 산출물을 지우지 않고 dist/loader.js 만 추가한다.
+# 결과 dist/(위젯 + loader.js) 전체가 아래 runtime 스테이지의 COPY 로 /app/static/widget 에 들어가
+# /widget/loader.js 로 서빙된다.
+RUN npm run build:loader
+
 
 # ---------- python-builder ----------
 FROM --platform=$TARGETPLATFORM python:3.11-slim AS python-builder
