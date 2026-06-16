@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useCaptcha } from '../hooks/useCaptcha';
 import CaptchaRouter from '../components/CaptchaRouter';
+import { postToParent, resolveTargetOrigin } from '../embed/parentMessaging';
 
 // =============================================================================
 // /embed 라우트 — iframe 임베드 전용 진입점
@@ -12,8 +13,11 @@ import CaptchaRouter from '../components/CaptchaRouter';
 //
 //   동작:
 //     1) 마운트 즉시 캡챠 발급 + 시작 (Home/선택 화면 안 거침)
-//     2) status 가 success/fail 로 전환되는 순간 단 한 번 parent.postMessage 발신
-//        payload = { type:'agami-result', success, challengeId, challengeType, captchaToken }
+//     2) status success/fail 전환 시 agami-result 발신 (기존 필드 + wid 추가)
+//        payload = { type:'agami-result', success, challengeId, challengeType, captchaToken, wid? }
+//     3) (loader 임베드 시) agami-ready 1회 + agami-resize(height) 발신.
+//   URL 쿼리 추가: wid(부모가 부여한 위젯 id, 모든 메시지에 echo), host(부모 origin → targetOrigin)
+//   targetOrigin: host 유효 시 host, 부재 시 '*'(직접-iframe 경로 호환).
 //
 //   부모 페이지 수신 예:
 //     window.addEventListener('message', e => {
@@ -40,24 +44,6 @@ const DIFFICULTY_MAP = {
   hard: 'hard',
 };
 
-function postResult({ success, spec, token }) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.parent.postMessage(
-      {
-        type: 'agami-result',
-        success,
-        challengeId: spec?.challenge_id ?? null,
-        challengeType: spec?.kind ?? null,
-        captchaToken: success ? token ?? null : null,
-      },
-      '*',
-    );
-  } catch {
-    // 부모 컨텍스트가 없거나(iframe 아님) cross-origin 정책 위반 시 무시.
-  }
-}
-
 export default function EmbedEntry() {
   const [searchParams] = useSearchParams();
   const rawKind = (searchParams.get('kind') ?? 'flashlight').toLowerCase();
@@ -76,6 +62,24 @@ export default function EmbedEntry() {
 
   const { status, spec, token, error, start, submit } = useCaptcha({ kind, difficulty, clientKey });
 
+  // --- 부모(loader) 통신 파라미터 (additive). 둘 다 없으면 직접-iframe 경로와 동일하게 동작.
+  const wid = searchParams.get('wid') || undefined; // 부모가 부여한 위젯 id (모든 메시지에 echo)
+  const host = searchParams.get('host'); // 부모 origin → targetOrigin
+  const targetOrigin = useMemo(() => resolveTargetOrigin(host), [host]);
+  const send = useCallback(
+    (payload) => {
+      if (typeof window === 'undefined') return;
+      postToParent(window.parent, payload, { wid, targetOrigin });
+    },
+    [wid, targetOrigin],
+  );
+  const rootRef = useRef(null);
+  const sendResize = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const height = Math.ceil(document.documentElement.scrollHeight);
+    send({ type: 'agami-resize', height });
+  }, [send]);
+
   // 첫 마운트 시 자동 시작 — idle → loading → active 자동 전환
   const startedRef = useRef(false);
   useEffect(() => {
@@ -87,18 +91,63 @@ export default function EmbedEntry() {
     }
   }, [status, start, clientKeyFormatInvalid]);
 
-  // status 종료 시 단 한 번 postMessage 발신
+  // status 종료 시 단 한 번 agami-result 발신 (기존 필드 유지 + wid 추가).
   const sentRef = useRef(false);
   useEffect(() => {
     if (sentRef.current) return;
     if (status === 'success') {
-      postResult({ success: true, spec, token });
+      send({
+        type: 'agami-result',
+        success: true,
+        challengeId: spec?.challenge_id ?? null,
+        challengeType: spec?.kind ?? null,
+        captchaToken: token ?? null,
+      });
       sentRef.current = true;
     } else if (status === 'fail') {
-      postResult({ success: false, spec, token });
+      send({
+        type: 'agami-result',
+        success: false,
+        challengeId: spec?.challenge_id ?? null,
+        challengeType: spec?.kind ?? null,
+        captchaToken: null,
+      });
       sentRef.current = true;
     }
-  }, [status, spec, token]);
+  }, [status, spec, token, send]);
+
+  // agami-ready: 위젯이 상호작용 가능/표시 완료된 첫 시점 1회 (loader 스피너 제거 트리거).
+  //   "첫 챌린지 렌더 완료(스피너 내릴 시점)" = status 가 loading 을 벗어나는 순간으로 정의.
+  const readySentRef = useRef(false);
+  useEffect(() => {
+    if (readySentRef.current) return;
+    if (status === 'active' || status === 'success' || status === 'fail') {
+      send({ type: 'agami-ready' });
+      sendResize(); // ready 직후 초기 높이 동기화
+      readySentRef.current = true;
+    }
+  }, [status, send, sendResize]);
+
+  // agami-resize: 루트 엘리먼트 높이 변화를 100ms throttle 로 부모에 통지.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    let timer = null;
+    const onResize = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        sendResize();
+      }, 100);
+    };
+    const ro = new ResizeObserver(onResize);
+    ro.observe(el);
+    sendResize(); // 초기 1회
+    return () => {
+      ro.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [sendResize]);
 
   // 재시도: postMessage 한 번 발신 후에는 부모가 iframe reload 로 처리하는 것이 원칙.
   // 다만 UX 차원의 자체 재시도 버튼 1회만 허용 — sent flag 해제 후 start().
@@ -130,7 +179,7 @@ export default function EmbedEntry() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8">
+    <div ref={rootRef} className="min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-5xl">
         {(status === 'idle' || status === 'loading') && (
           <div className="mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl bg-white shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
