@@ -101,7 +101,7 @@ async def issue_challenge(
     ip = request.client.host if request.client else "unknown"
     fail_count = await store.get_failure_count(ip)
 
-    difficulty = decide_difficulty(body.difficulty, tenant_default, fail_count)
+    difficulty = Difficulty.EASY  # [단계 0] accept+ignore: body.difficulty/tenant_default/fail_count 무시, 단일 고정(easy)
 
     # kind 별 generator 호출 (모두 순수 함수, (spec, answer) 페어 반환)
     if body.kind == ChallengeKind.FLASHLIGHT:
