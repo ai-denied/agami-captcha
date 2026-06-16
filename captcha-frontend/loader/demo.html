@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agami CAPTCHA — 회원사 임베드 데모</title>
+  <style>
+    body { font: 15px/1.6 system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 16px; color: #1d2a44; }
+    h2 { margin-top: 40px; }
+    .box { border: 1px solid #e0e7f3; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    code { background: #f5f8ff; padding: 2px 6px; border-radius: 4px; }
+    button { padding: 8px 14px; border: 0; border-radius: 8px; background: #4a8bff; color: #fff; font-weight: 700; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Agami CAPTCHA 임베드 데모</h1>
+  <p>회원사는 <code>&lt;script&gt;</code> 한 줄 + <code>&lt;div&gt;</code> 한 줄만 넣으면 된다.</p>
+
+  <!--
+    [1] loader 스크립트 한 줄.
+    - 운영: <script src="https://agami-captcha.cloud/widget/loader.js" async></script>
+    - 로컬 검증: dist/loader.js 를 정적 서버로 띄우거나, /widget/loader.js 로 서빙.
+    loader 는 자신이 로드된 origin 에서 embed base 를 유도하므로 origin 하드코딩 불필요.
+  -->
+  <script src="../dist/loader.js" async></script>
+
+  <h2>① implicit (자동 렌더)</h2>
+  <p>DOMContentLoaded 시 <code>.agami-captcha</code> div 를 자동 스캔해 렌더.</p>
+  <div class="box">
+    <!-- div 한 줄. data-* 로 옵션 전달. (difficulty 속성은 없음 — 백엔드에서 제거됨) -->
+    <div class="agami-captcha"
+         data-sitekey="ck_test"
+         data-kind="flashlight"
+         data-callback="onCaptchaToken"
+         data-error-callback="onCaptchaError"></div>
+  </div>
+
+  <h2>② explicit (수동 렌더)</h2>
+  <div class="box">
+    <div id="explicit-box"></div>
+    <p><button id="render-btn">agami.render() 호출</button>
+       <button id="reset-btn">reset</button>
+       <button id="get-btn">getResponse</button></p>
+  </div>
+
+  <h2>③ SPA 동적 추가 (MutationObserver)</h2>
+  <div class="box">
+    <div id="dynamic-host"></div>
+    <p><button id="add-btn">동적으로 .agami-captcha div 추가</button></p>
+  </div>
+
+  <script>
+    // 전역 콜백(implicit 의 data-callback / data-error-callback 이 이름으로 참조).
+    function onCaptchaToken(token) {
+      console.log('[demo] 토큰 수신:', token);
+      alert('CAPTCHA 통과! token=' + token.slice(0, 12) + '…');
+    }
+    function onCaptchaError(info) {
+      console.warn('[demo] 실패:', info);
+    }
+
+    // explicit 렌더 — agami 가 준비된 뒤 호출.
+    let wid;
+    document.getElementById('render-btn').addEventListener('click', function () {
+      wid = window.agami.render('#explicit-box', {
+        sitekey: 'ck_test',
+        kind: 'flashlight',
+        callback: function (token) { console.log('[demo] explicit token:', token); },
+        errorCallback: function (info) { console.warn('[demo] explicit error:', info); },
+      });
+      console.log('[demo] widgetId =', wid);
+    });
+    document.getElementById('reset-btn').addEventListener('click', function () {
+      if (wid) window.agami.reset(wid);
+    });
+    document.getElementById('get-btn').addEventListener('click', function () {
+      if (wid) alert('현재 토큰: "' + window.agami.getResponse(wid) + '"');
+    });
+
+    // SPA 동적 추가 — MutationObserver 가 자동 렌더.
+    document.getElementById('add-btn').addEventListener('click', function () {
+      var d = document.createElement('div');
+      d.className = 'agami-captcha';
+      d.setAttribute('data-sitekey', 'ck_test');
+      d.setAttribute('data-kind', 'context_inference');
+      document.getElementById('dynamic-host').appendChild(d);
+    });
+  </script>
+</body>
+</html>
