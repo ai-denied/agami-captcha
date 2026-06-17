@@ -64,6 +64,7 @@ export default function EmbedEntry() {
 
   // --- 부모(loader) 통신 파라미터 (additive). 둘 다 없으면 직접-iframe 경로와 동일하게 동작.
   const wid = searchParams.get('wid') || undefined; // 부모가 부여한 위젯 id (모든 메시지에 echo)
+  const isEmbedded = Boolean(wid); // loader 경유 임베드 여부 — 레이아웃/높이측정 분기에만 사용(캡차 로직 불변)
   const host = searchParams.get('host'); // 부모 origin → targetOrigin
   const targetOrigin = useMemo(() => resolveTargetOrigin(host), [host]);
   const send = useCallback(
@@ -76,9 +77,15 @@ export default function EmbedEntry() {
   const rootRef = useRef(null);
   const sendResize = useCallback(() => {
     if (typeof document === 'undefined') return;
-    const height = Math.ceil(document.documentElement.scrollHeight);
+    // 임베드(wid): 루트 콘텐츠 높이로 측정 → iframe 이 콘텐츠에 맞게 줄어듦(파란 여백 제거).
+    //   documentElement.scrollHeight 는 viewport(=iframe)보다 작아질 수 없어 축소가 안 되므로 사용 안 함.
+    // 직접 경로(wid 없음): 기존과 100% 동일하게 documentElement.scrollHeight.
+    const el = rootRef.current;
+    const height = Math.ceil(
+      isEmbedded && el ? el.getBoundingClientRect().height : document.documentElement.scrollHeight,
+    );
     send({ type: 'agami-resize', height });
-  }, [send]);
+  }, [send, isEmbedded]);
 
   // 첫 마운트 시 자동 시작 — idle → loading → active 자동 전환
   const startedRef = useRef(false);
@@ -156,10 +163,16 @@ export default function EmbedEntry() {
     start();
   };
 
+  // 루트 레이아웃: 임베드(wid)일 때만 100vh/파란 그라데이션/수직중앙 제거 → 콘텐츠 높이·투명(여백 제거).
+  //   직접 iframe(wid 없음)은 기존 className 문자열 그대로 → 1px도 안 바뀜.
+  const rootClass = isEmbedded
+    ? 'flex justify-center p-2'
+    : 'min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8';
+
   // client_key 파라미터가 존재하지만 형식이 틀린 경우: 챌린지 발급 없이 명확한 에러만 표시.
   if (clientKeyFormatInvalid) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8">
+      <div className={rootClass}>
         <div className="mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">
@@ -179,7 +192,7 @@ export default function EmbedEntry() {
   }
 
   return (
-    <div ref={rootRef} className="min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8">
+    <div ref={rootRef} className={rootClass}>
       <div className="w-full max-w-5xl">
         {(status === 'idle' || status === 'loading') && (
           <div className="mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl bg-white shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
