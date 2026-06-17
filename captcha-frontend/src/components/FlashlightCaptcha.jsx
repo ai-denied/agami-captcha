@@ -10,7 +10,7 @@ import { API_BASE_URL } from '../api/captchaApi';
 //   하여 React 리렌더 우회 (기존 캔버스 패턴과 동일한 성능 특성).
 // - 클릭 시 정규화 좌표(0~1)로 onSubmit. 백엔드 verifier 가 bbox 매칭.
 // =============================================================================
-export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, error }) {
+export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
   const wrapRef = useRef(null);
   const overlayRef = useRef(null);
   const cursorRingRef = useRef(null);
@@ -138,8 +138,13 @@ export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, e
 
   if (!spec || !currentSub) return null;
 
+  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
+  const cardEdge = embedded
+    ? 'border border-gray-200 shadow-sm'
+    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
+
   return (
-    <div className="w-full max-w-[900px] min-w-0 bg-white rounded-xl shadow-[0_20px_60px_rgba(70,130,255,0.15)] overflow-hidden mx-auto">
+    <div className={`w-full max-w-[900px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">

@@ -168,12 +168,17 @@ export default function EmbedEntry() {
   const rootClass = isEmbedded
     ? 'flex justify-center'
     : 'min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8';
+  // 카드 경계: 임베드(wid) 시에만 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(밝은 배경에서 카드 구분).
+  //   직접 경로는 기존 큰 그림자 문자열 그대로 → 카드 모양 불변.
+  const cardEdge = isEmbedded
+    ? 'border border-gray-200 shadow-sm'
+    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
 
   // client_key 파라미터가 존재하지만 형식이 틀린 경우: 챌린지 발급 없이 명확한 에러만 표시.
   if (clientKeyFormatInvalid) {
     return (
       <div className={rootClass}>
-        <div className="mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
+        <div className={`mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 ${cardEdge}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">
               ❌
@@ -195,7 +200,7 @@ export default function EmbedEntry() {
     <div ref={rootRef} className={rootClass}>
       <div className="w-full max-w-5xl">
         {(status === 'idle' || status === 'loading') && (
-          <div className="mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl bg-white shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
+          <div className={`mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl bg-white ${cardEdge}`}>
             <div className="flex items-center gap-3 text-[#6b7891]">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#e0e7f3] border-t-[#4a8bff]" />
               <span className="text-sm font-medium">챌린지를 발급받는 중…</span>
@@ -211,11 +216,12 @@ export default function EmbedEntry() {
             error={error}
             onSubmit={submit}
             onRefresh={start}
+            embedded={isEmbedded}
           />
         )}
 
         {status === 'success' && (
-          <div className="mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
+          <div className={`mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 ${cardEdge}`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-2xl">
                 ✅
@@ -231,7 +237,7 @@ export default function EmbedEntry() {
         )}
 
         {status === 'fail' && (
-          <div className="mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(70,130,255,0.15)]">
+          <div className={`mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 ${cardEdge}`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">
                 ❌

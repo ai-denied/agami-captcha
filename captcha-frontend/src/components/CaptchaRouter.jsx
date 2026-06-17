@@ -17,6 +17,7 @@ export default function CaptchaRouter({
   error,
   onSubmit,
   onRefresh,
+  embedded = false,
 }) {
   if (kind === 'flashlight') {
     return (
@@ -26,6 +27,7 @@ export default function CaptchaRouter({
         error={error}
         onSubmit={onSubmit}
         onRefresh={onRefresh}
+        embedded={embedded}
       />
     );
   }
@@ -38,6 +40,7 @@ export default function CaptchaRouter({
         error={error}
         onSubmit={onSubmit}
         onRefresh={onRefresh}
+        embedded={embedded}
       />
     );
   }
@@ -50,6 +53,7 @@ export default function CaptchaRouter({
         error={error}
         onSubmit={onSubmit}
         onRefresh={onRefresh}
+        embedded={embedded}
       />
     );
   }

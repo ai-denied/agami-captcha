@@ -107,7 +107,7 @@ const MP_FACE_MESH_CDN = (file) =>
   `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
 
 
-export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh }) {
+export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded = false }) {
   // DOM
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -364,8 +364,13 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh }) {
   const currentInstruction = spec.instructions[currentInstructionIndex];
   const isCompleteFlash = detectionStatus === 'instruction_complete';
 
+  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
+  const cardEdge = embedded
+    ? 'border border-gray-200 shadow-sm'
+    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
+
   return (
-    <div className="w-full max-w-[520px] min-w-0 bg-white rounded-xl shadow-[0_20px_60px_rgba(70,130,255,0.15)] overflow-hidden mx-auto">
+    <div className={`w-full max-w-[520px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">

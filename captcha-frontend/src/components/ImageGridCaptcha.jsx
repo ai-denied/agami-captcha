@@ -32,7 +32,7 @@ const EMOTION_ICON = {
   contempt: '😒',
 };
 
-export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, error }) {
+export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
   // 카운트다운 (전체 시간 제한, 문제 이동 무관 유지)
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
 
@@ -109,8 +109,13 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
   // 문제 단계 진행률 (전체 시간 진행률은 FishTimer 가 자체 계산)
   const stepPct = ((step + 1) / total) * 100;
 
+  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
+  const cardEdge = embedded
+    ? 'border border-gray-200 shadow-sm'
+    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
+
   return (
-    <div className="w-full max-w-[480px] min-w-0 bg-white rounded-xl shadow-[0_20px_60px_rgba(70,130,255,0.15)] overflow-hidden mx-auto">
+    <div className={`w-full max-w-[480px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">
