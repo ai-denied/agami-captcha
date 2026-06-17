@@ -166,7 +166,7 @@ export default function EmbedEntry() {
   // 루트 레이아웃: 임베드(wid)일 때만 100vh/파란 그라데이션/수직중앙 제거 → 콘텐츠 높이·투명(여백 제거).
   //   직접 iframe(wid 없음)은 기존 className 문자열 그대로 → 1px도 안 바뀜.
   const rootClass = isEmbedded
-    ? 'flex justify-center p-2'
+    ? 'flex justify-center'
     : 'min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8';
 
   // client_key 파라미터가 존재하지만 형식이 틀린 경우: 챌린지 발급 없이 명확한 에러만 표시.
