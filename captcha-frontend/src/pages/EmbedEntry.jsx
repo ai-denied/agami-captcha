@@ -229,7 +229,7 @@ export default function EmbedEntry() {
               <div>
                 <div className="text-lg font-bold text-[#1d2a44]">검증 성공</div>
                 <div className="text-xs text-[#6b7891]">
-                  결과가 부모 페이지로 전송되었습니다.
+                  당신은 사람이군요?
                 </div>
               </div>
             </div>
