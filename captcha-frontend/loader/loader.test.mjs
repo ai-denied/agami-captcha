@@ -11,6 +11,8 @@
  *  - ready 미수신 대비(onload 시 스피너 제거)
  *  - implicit 스캔 + MutationObserver 동적 추가
  *  - wid forward-compat 라우팅
+ *  - 트리거(인라인 확장) 모델: render 시 버튼만 → 클릭 시 iframe 마운트
+ *  - 생명주기 idle→expanded→verified→reset→idle, fail→idle (DOM 관측으로 검증)
  */
 import vm from 'node:vm';
 import fs from 'node:fs';
@@ -136,16 +138,22 @@ function ok(name, cond) {
   else { console.error('  ✗ ' + name); throw new Error('FAILED: ' + name); }
 }
 function iframeOf(div) { return div.children.find((c) => c.tagName === 'IFRAME'); }
+function triggerOf(div) { return div.children.find((c) => c.tagName === 'BUTTON'); }
+function verifiedOf(div) { return div.children.find((c) => c.getAttribute && c.getAttribute('class') === 'agami-verified'); }
+// 트리거 클릭(네이티브 button.onclick) → iframe 마운트. 마운트된 iframe 반환.
+function clickTrigger(div) { const b = triggerOf(div); b.onclick(); return iframeOf(div); }
 
 // === 1) 전역/API ===
 ok('window.agami 단일 전역 노출', agami && typeof agami === 'object');
 ok('render/reset/getResponse 존재',
   typeof agami.render === 'function' && typeof agami.reset === 'function' && typeof agami.getResponse === 'function');
 
-// === 2) implicit 자동 렌더 ===
+// === 2) implicit 자동 렌더 (트리거 모델: 렌더 시 버튼만, 클릭 시 iframe) ===
 ok('implicit div 렌더됨(data-agami-rendered)', !!implicitDiv.getAttribute('data-agami-rendered'));
-const impFrame = iframeOf(implicitDiv);
-ok('implicit iframe 생성', !!impFrame);
+ok('implicit 초기엔 트리거 버튼 존재', !!triggerOf(implicitDiv));
+ok('implicit 초기엔 iframe 없음(지연 생성)', !iframeOf(implicitDiv));
+const impFrame = clickTrigger(implicitDiv); // 트리거 클릭 → iframe 마운트
+ok('implicit 클릭 후 iframe 생성', !!impFrame);
 ok('implicit src kind=context_inference', impFrame.src.includes('kind=context_inference'));
 ok('implicit src client_key=ck_test', impFrame.src.includes('client_key=ck_test'));
 ok('implicit src wid 포함', /[?&]wid=agami-/.test(impFrame.src));
@@ -162,7 +170,7 @@ const id1 = agami.render('#box1', {
   errorCallback: (e) => { cb1Err = e; },
 });
 ok('explicit render → widgetId 반환(string)', typeof id1 === 'string' && id1.startsWith('agami-'));
-const f1 = iframeOf(box1);
+const f1 = clickTrigger(box1); // 트리거 클릭 → iframe 마운트
 ok('explicit iframe src kind=flashlight', f1.src.includes('kind=flashlight'));
 ok('sandbox=allow-scripts allow-same-origin', f1.getAttribute('sandbox') === 'allow-scripts allow-same-origin');
 ok('allow 에 camera 포함(face_mission)', (f1.getAttribute('allow') || '').includes('camera'));
@@ -182,7 +190,7 @@ ok('성공 콜백 호출(token 전달)', cb1Token === 'TOK_OK');
 const box2 = makeEl('div'); box2.setAttribute('id', 'box2'); documentMock.body.appendChild(box2);
 let cb2Token = null;
 const id2 = agami.render('#box2', { sitekey: 'ck_test', kind: 'flashlight', callback: (t) => { cb2Token = t; } });
-const f2 = iframeOf(box2);
+const f2 = clickTrigger(box2); // 트리거 클릭 → iframe 마운트
 ok('두 위젯 widgetId 상이', id1 !== id2);
 messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'TOK2' }, source: f2.contentWindow });
 ok('위젯2 토큰만 갱신', agami.getResponse(id2) === 'TOK2');
@@ -198,7 +206,7 @@ ok('실패 콜백(errorCallback) 호출', cb1Err && cb1Err.success === false);
 // === 8) ready 미수신 대비: onload 시 스피너 제거 ===
 const box3 = makeEl('div'); box3.setAttribute('id', 'box3'); documentMock.body.appendChild(box3);
 const id3 = agami.render('#box3', { sitekey: 'ck_test', kind: 'flashlight' });
-const f3 = iframeOf(box3);
+const f3 = clickTrigger(box3); // 트리거 클릭 → iframe 마운트(+스피너 생성)
 ok('초기 스피너 존재', !!box3.querySelector('[data-agami-loading]'));
 f3.onload(); // iframe 로드 시뮬레이션
 ok('onload 후 스피너 제거', !box3.querySelector('[data-agami-loading]'));
@@ -207,11 +215,19 @@ ok('onload 후 스피너 제거', !box3.querySelector('[data-agami-loading]'));
 messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-resize', height: 320 }, source: f3.contentWindow });
 ok('agami-resize 로 iframe height 설정', f3.style.height === '320px');
 
-// === 10) reset ===
-const srcBefore = f1.src;
-agami.reset(id1);
-ok('reset 후 토큰 빈 문자열', agami.getResponse(id1) === '');
-ok('reset 시 iframe src 재로드(cache-buster)', f1.src !== srcBefore && f1.src.includes('&_='));
+// === 10) reset → idle 복귀 (트리거 모델: src 재로드 아님 → iframe 제거) ===
+const boxRs = makeEl('div'); boxRs.setAttribute('id', 'boxRs'); documentMock.body.appendChild(boxRs);
+const idRs = agami.render('#boxRs', { sitekey: 'ck_test', kind: 'flashlight' });
+const fRs = clickTrigger(boxRs);
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'RS', wid: idRs }, source: fRs.contentWindow });
+ok('reset 전 토큰 수신(RS)', agami.getResponse(idRs) === 'RS');
+ok('reset 전 iframe 존재', !!iframeOf(boxRs));
+agami.reset(idRs);
+ok('reset 후 토큰 빈 문자열', agami.getResponse(idRs) === '');
+ok('reset 후 iframe 제거(재로드 아님)', !iframeOf(boxRs));
+ok('reset 후 verified 제거', !verifiedOf(boxRs));
+ok('reset 후 트리거 버튼 복원(보임)', triggerOf(boxRs).hidden === false);
+ok('reset 후 hidden input 비움', boxRs.querySelector('input[name="agami-captcha-response"]').value === '');
 
 // === 11) MutationObserver 동적 추가 ===
 ok('MutationObserver 콜백 등록됨', typeof moCallback === 'function');
@@ -221,7 +237,9 @@ dynDiv.setAttribute('data-sitekey', 'ck_test');
 dynDiv.setAttribute('data-kind', 'flashlight');
 documentMock.body.appendChild(dynDiv);
 moCallback([{ addedNodes: [dynDiv] }]);
-ok('동적 div 자동 렌더', !!dynDiv.getAttribute('data-agami-rendered') && !!iframeOf(dynDiv));
+ok('동적 div 자동 렌더(트리거 버튼)', !!dynDiv.getAttribute('data-agami-rendered') && !!triggerOf(dynDiv));
+ok('동적 div 초기 iframe 없음', !iframeOf(dynDiv));
+ok('동적 div 클릭 후 iframe 생성', !!clickTrigger(dynDiv));
 
 // === 12) wid forward-compat 라우팅 ===
 // source 가 일치하지 않아도 data.wid 가 레지스트리에 있으면 그 위젯으로 라우팅.
@@ -238,51 +256,157 @@ let threw = false;
 try { const r = agami.render('#does-not-exist', {}); ok('없는 선택자 → undefined 반환', r === undefined); } catch (e) { threw = true; }
 ok('없는 선택자에도 throw 하지 않음', threw === false);
 
-// === 15) reset 후 source 매칭 (핵심: live-read 라우팅) ===
-// findWidget 은 w.iframe.contentWindow 를 매번 라이브로 읽으므로, reset 으로 iframe 이
-// 재로드돼 contentWindow 가 바뀌어도(또는 실브라우저처럼 동일 유지돼도) 항상 최신값과 비교된다.
-const box4 = makeEl('div'); box4.setAttribute('id', 'box4'); documentMock.body.appendChild(box4);
-let cb4 = null;
-const id4 = agami.render('#box4', { sitekey: 'ck_test', kind: 'flashlight', callback: (t) => { cb4 = t; } });
-const f4 = iframeOf(box4);
-const oldCW4 = f4.contentWindow;
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'T_OLD' }, source: oldCW4 });
-ok('reset 전 토큰 수신(T_OLD)', agami.getResponse(id4) === 'T_OLD' && cb4 === 'T_OLD');
+// === 15) 트리거 생명주기 (idle → expanded → verified → reset → idle → fail) ===
+//   phase 는 내부 상태(API 미노출) → 관측 가능한 DOM(트리거 버튼/iframe/verified)으로 검증.
+const boxT = makeEl('div'); boxT.setAttribute('id', 'boxT'); documentMock.body.appendChild(boxT);
+let cbT = null, cbTErr = null;
+const idT = agami.render('#boxT', { sitekey: 'ck_test', kind: 'flashlight', callback: (t) => { cbT = t; }, errorCallback: (e) => { cbTErr = e; } });
+// (a) render 직후: 버튼 존재 / iframe 부재 / idle
+ok('(a) render 직후 트리거 버튼 존재', !!triggerOf(boxT));
+ok('(a) render 직후 iframe 부재(지연 생성)', !iframeOf(boxT));
+ok('(a) render 직후 idle(버튼 보임)', triggerOf(boxT).hidden !== true);
+ok('(a) render 직후 verified 없음', !verifiedOf(boxT));
+ok('(a) 초기 토큰 빈 문자열', agami.getResponse(idT) === '');
+// (b) 클릭 → expanded
+const fT = clickTrigger(boxT);
+ok('(b) 클릭 후 iframe 생성', !!fT);
+ok('(b) expanded: 트리거 버튼 숨김', triggerOf(boxT).hidden === true);
+ok('(b) expanded: iframe 보임(display!=none)', fT.style.display !== 'none');
+ok('(b) expanded: verified 없음', !verifiedOf(boxT));
+// (c) success → verified
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'TOK_T', challengeId: 'cT', challengeType: 'flashlight', wid: idT }, source: fT.contentWindow });
+ok('(c) verified: 토큰 보존', agami.getResponse(idT) === 'TOK_T');
+ok('(c) verified: 성공 콜백 호출', cbT === 'TOK_T');
+ok('(c) verified: iframe 접힘(display:none)', fT.style.display === 'none');
+ok('(c) verified: verified 표시 존재', !!verifiedOf(boxT));
+ok('(c) verified: 트리거 버튼 숨김 유지', triggerOf(boxT).hidden === true);
+// (d) reset → idle
+agami.reset(idT);
+ok('(d) reset 후 토큰 빈 문자열', agami.getResponse(idT) === '');
+ok('(d) reset 후 iframe 제거', !iframeOf(boxT));
+ok('(d) reset 후 verified 제거', !verifiedOf(boxT));
+ok('(d) reset 후 트리거 버튼 복원(보임)', triggerOf(boxT).hidden === false);
+// (e) 재클릭 → expanded → fail → idle
+const fT2 = clickTrigger(boxT);
+ok('(e) 재클릭 후 새 iframe(보임)', !!fT2 && fT2.style.display !== 'none');
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: false, wid: idT }, source: fT2.contentWindow });
+ok('(e) fail 후 토큰 빈 문자열', agami.getResponse(idT) === '');
+ok('(e) fail 후 errorCallback 호출', cbTErr && cbTErr.success === false);
+ok('(e) fail 후 iframe 제거(idle)', !iframeOf(boxT));
+ok('(e) fail 후 트리거 버튼 복원', triggerOf(boxT).hidden === false);
+ok('(e) fail 후 verified 없음', !verifiedOf(boxT));
 
-agami.reset(id4);
-ok('reset 후 토큰 비움', agami.getResponse(id4) === '');
-ok('reset 시 src cache-buster(&_=)', f4.src.includes('&_='));
-ok('reset 후 w.iframe 동일 엘리먼트 유지(요소 교체 아님)', iframeOf(box4) === f4);
+// === 16) reset 후 재마운트 라우팅(live-read) + 멀티위젯 격리 ===
+const boxR = makeEl('div'); boxR.setAttribute('id', 'boxR'); documentMock.body.appendChild(boxR);
+const idR = agami.render('#boxR', { sitekey: 'ck_test', kind: 'flashlight' });
+const fR1 = clickTrigger(boxR);
+const cwR1 = fR1.contentWindow;
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'R1' }, source: cwR1 });
+ok('재마운트 전 토큰 수신(R1)', agami.getResponse(idR) === 'R1');
 
-// (A) 실브라우저: 같은 iframe 재로드 시 WindowProxy(contentWindow) 동일 유지 → 같은 CW 로도 라우팅.
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'T_SAME' }, source: oldCW4 });
-ok('reset 후 동일 contentWindow(실브라우저 동작)로 라우팅', agami.getResponse(id4) === 'T_SAME');
+// 별개 위젯 M (멀티위젯 격리 확인용)
+const boxM = makeEl('div'); boxM.setAttribute('id', 'boxM'); documentMock.body.appendChild(boxM);
+const idM = agami.render('#boxM', { sitekey: 'ck_test', kind: 'flashlight' });
+const fM = clickTrigger(boxM);
+const cwM = fM.contentWindow;
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'M1' }, source: cwM });
+ok('위젯M 토큰 수신(M1)', agami.getResponse(idM) === 'M1');
 
-// (B) 보수적 최악 가정: 재로드로 새 contentWindow 가 생긴 경우 → live-read 가 최신값을 본다.
-const newCW4 = { __frame: 'reloaded-4' };
-f4.contentWindow = newCW4; // 브라우저가 새 WindowProxy 를 줬다고 가정
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'T_NEW' }, source: newCW4 });
-ok('★ reset 후 새 contentWindow 결과가 해당 위젯에 라우팅(live-read)', agami.getResponse(id4) === 'T_NEW');
+agami.reset(idR);
+ok('reset 후 옛 iframe 제거', !iframeOf(boxR));
+const fR2 = clickTrigger(boxR); // 재클릭 → 새 iframe(새 contentWindow)
+const cwR2 = fR2.contentWindow;
+ok('재마운트 iframe 은 새 contentWindow', cwR2 !== cwR1);
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'R2' }, source: cwR2 });
+ok('재마운트 후 새 contentWindow 로 라우팅(R2, live-read)', agami.getResponse(idR) === 'R2');
+// 옛 contentWindow(제거된 iframe) 지연 메시지는 무시(현재 iframe 불일치 + wid 없음).
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'R_STALE' }, source: cwR1 });
+ok('옛 contentWindow 지연 메시지 무시', agami.getResponse(idR) === 'R2');
+// 멀티위젯 격리: idR reset/재마운트가 idM 라우팅을 깨지 않음.
+messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'M2' }, source: cwM });
+ok('위젯M 계속 자기 contentWindow 로 라우팅(M2)', agami.getResponse(idM) === 'M2');
 
-// (B') 옛 contentWindow 에서 온 지연 메시지는 무시.
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'T_STALE' }, source: oldCW4 });
-ok('reset 후 옛 contentWindow(지연) 메시지 무시', agami.getResponse(id4) === 'T_NEW');
+// === 17) embed base override hook (data-embed-base / window.AGAMI_EMBED_BASE) ===
+// 각 시나리오를 독립 vm 컨텍스트에서 로더를 재실행해 검증(EMBED_BASE 는 로드 시 1회 확정).
+//   loader 는 localhost(127.0.0.1:5500)에서 로드된 것으로 가정, script src 는 derived.example.
+function loadCtx(opts) {
+  opts = opts || {};
+  const scriptEl = makeEl('script');
+  scriptEl.src = opts.scriptSrc || 'https://derived.example/widget/loader.js';
+  if (opts.dataEmbedBase != null) scriptEl.setAttribute('data-embed-base', opts.dataEmbedBase);
+  let localMsg = null;
+  const doc = {
+    currentScript: scriptEl,
+    readyState: 'complete',
+    createElement: (t) => makeEl(t),
+    getElementsByTagName: () => [],
+    addEventListener: () => {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  doc.documentElement = makeEl('html');
+  doc.body = makeEl('body');
+  const c = {
+    console, URL, Date, Math, Number, Object, encodeURIComponent,
+    setTimeout: () => 0, clearTimeout: () => {},
+    document: doc,
+    location: { href: 'http://127.0.0.1:5500/demo.html', origin: 'http://127.0.0.1:5500' },
+    MutationObserver: function () { this.observe = () => {}; this.disconnect = () => {}; },
+    addEventListener: (type, fn) => { if (type === 'message') localMsg = fn; },
+  };
+  if (opts.windowEmbedBase != null) c.AGAMI_EMBED_BASE = opts.windowEmbedBase;
+  c.window = c; c.globalThis = c;
+  vm.createContext(c);
+  vm.runInContext(code, c);
+  return {
+    agami: c.agami,
+    srcOf() {
+      const div = makeEl('div');
+      const id = c.agami.render(div, { sitekey: 'ck_test', kind: 'flashlight' });
+      div.children.find((x) => x.tagName === 'BUTTON').onclick(); // 트리거 클릭 → iframe 마운트
+      const f = div.children.find((x) => x.tagName === 'IFRAME');
+      return { src: f.src, div, iframe: f, id };
+    },
+    send(ev) { if (localMsg) localMsg(ev); },
+  };
+}
+const DERIVED = 'https://derived.example/widget/embed'; // override 없을 때의 유도 base
 
-// === 16) 멀티위젯: 한쪽만 reset 해도 다른 쪽 라우팅 유지 ===
-const box5 = makeEl('div'); box5.setAttribute('id', 'box5'); documentMock.body.appendChild(box5);
-const id5 = agami.render('#box5', { sitekey: 'ck_test', kind: 'flashlight' });
-const f5 = iframeOf(box5);
-const cw5 = f5.contentWindow;
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'W5' }, source: cw5 });
-ok('위젯5 토큰 수신(W5)', agami.getResponse(id5) === 'W5');
+// (a) override 미설정 → 유도값 그대로(기본 동작 불변)
+ok('(a) override 미설정 → 유도 base 그대로', loadCtx({}).srcOf().src.startsWith(DERIVED + '?'));
 
-agami.reset(id4);
-const newCW4b = { __frame: 'reloaded-4b' };
-f4.contentWindow = newCW4b;
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'T_NEW2' }, source: newCW4b });
-ok('위젯4 재reset 후 라우팅 정상(T_NEW2)', agami.getResponse(id4) === 'T_NEW2');
-ok('위젯4 reset 이 위젯5 라우팅 깨지 않음', agami.getResponse(id5) === 'W5');
-messageHandler({ origin: SERVICE_ORIGIN, data: { type: 'agami-result', success: true, captchaToken: 'W5b' }, source: cw5 });
-ok('위젯5 계속 자기 contentWindow 로 라우팅(W5b)', agami.getResponse(id5) === 'W5b');
+// (b) data-embed-base 설정 → 그 base 로 src + host 는 부모 origin 유지(별개)
+{
+  const { src } = loadCtx({ dataEmbedBase: 'https://agami-captcha.cloud/widget/embed' }).srcOf();
+  ok('(b) data-embed-base → src 가 그 base 로 시작', src.startsWith('https://agami-captcha.cloud/widget/embed?'));
+  ok('(b) host 는 여전히 부모 origin(별개 유지)', src.includes('host=' + encodeURIComponent('http://127.0.0.1:5500')));
+}
+
+// (c) window 전역만 설정 → 그 base 로 src
+ok('(c) window.AGAMI_EMBED_BASE → 그 base 로 시작',
+  loadCtx({ windowEmbedBase: 'https://win.example/widget/embed' }).srcOf().src.startsWith('https://win.example/widget/embed?'));
+
+// (d) 둘 다 설정 → data-* 우선
+ok('(d) data-* 가 window 보다 우선',
+  loadCtx({ dataEmbedBase: 'https://data.example/widget/embed', windowEmbedBase: 'https://win.example/widget/embed' })
+    .srcOf().src.startsWith('https://data.example/widget/embed?'));
+
+// (e) 잘못된 값 → 무시하고 폴백(유도값)
+ok('(e) 상대경로 override 무시 → 유도 폴백',
+  loadCtx({ dataEmbedBase: '/widget/embed' }).srcOf().src.startsWith(DERIVED + '?'));
+ok("(e') 빈 값 override 무시 → 유도 폴백",
+  loadCtx({ dataEmbedBase: '', windowEmbedBase: '' }).srcOf().src.startsWith(DERIVED + '?'));
+ok("(e'') 비-http(file:) override 무시 → 유도 폴백",
+  loadCtx({ dataEmbedBase: 'file:///etc/passwd' }).srcOf().src.startsWith(DERIVED + '?'));
+
+// (f) override 시 SERVICE_ORIGIN 도 그 origin → 그 origin 메시지만 게이트 통과
+{
+  const env = loadCtx({ dataEmbedBase: 'https://agami-captcha.cloud/widget/embed' });
+  const { id, iframe } = env.srcOf();
+  env.send({ origin: 'https://agami-captcha.cloud', data: { type: 'agami-result', success: true, captchaToken: 'OVT', wid: id }, source: iframe.contentWindow });
+  ok('(f) override origin 결과는 게이트 통과(토큰 반영)', env.agami.getResponse(id) === 'OVT');
+  env.send({ origin: 'http://127.0.0.1:5500', data: { type: 'agami-result', success: true, captchaToken: 'BAD', wid: id }, source: iframe.contentWindow });
+  ok('(f) 비-override(부모 localhost) origin 메시지는 거부', env.agami.getResponse(id) === 'OVT');
+}
 
 console.log('\nALL PASSED — ' + pass + ' assertions');
