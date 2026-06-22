@@ -198,3 +198,47 @@ export function detectInstruction(type, landmarks, noseHistory) {
       return false;
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// 원시 랜드마크 증거 수집 (A1)
+// ---------------------------------------------------------------------------
+// 서버가 위젯과 동일한 기하 식을 1:1 로 재현해 검증하려면, 위젯이 판정에 쓰는
+// 좌표를 변환 없이 그대로 받아야 한다. EVIDENCE_INDICES 는 EAR(좌6+우6) +
+// yaw(코끝·양 광대) + smile(입 4점) + nod(코끝, 이미 포함) 에 쓰이는 인덱스의
+// 중복 제거 집합이며, 위 상수들에서 파생한다(직접 하드코딩 금지).
+
+export const EVIDENCE_INDICES = [
+  ...new Set([
+    ...LEFT_EYE_EAR_INDICES,
+    ...RIGHT_EYE_EAR_INDICES,
+    NOSE_TIP,
+    IMG_LEFT_CHEEK,
+    IMG_RIGHT_CHEEK,
+    MOUTH_LEFT,
+    MOUTH_RIGHT,
+    MOUTH_TOP,
+    MOUTH_BOTTOM,
+  ]),
+];
+
+/**
+ * 한 프레임의 normalized landmark 에서 EVIDENCE_INDICES 만 뽑아
+ * { [idx]: [x, y] } 형태로 반환한다.
+ * - 좌표는 raw 정규화(0~1) 무변환, 소수 5자리 반올림.
+ * - z 는 위젯 식이 2D 만 쓰므로 보내지 않는다.
+ * - lm[idx] 가 없으면 해당 idx 는 생략.
+ *
+ * @param {Array<{x:number,y:number,z:number}>} lm normalized landmarks
+ * @returns {Object<number, [number, number]>}
+ */
+export function extractEvidence(lm) {
+  const round5 = (v) => Math.round(v * 1e5) / 1e5;
+  const out = {};
+  for (const idx of EVIDENCE_INDICES) {
+    const p = lm[idx];
+    if (!p) continue;
+    out[idx] = [round5(p.x), round5(p.y)];
+  }
+  return out;
+}

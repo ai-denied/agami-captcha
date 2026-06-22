@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { detectInstruction } from '../lib/faceDetection';
+import { detectInstruction, extractEvidence } from '../lib/faceDetection';
 import FishTimer from './FishTimer';
 
 // =============================================================================
@@ -106,6 +106,16 @@ const COLOR_WHITE = 'rgba(255, 255, 255, 0.95)';
 const MP_FACE_MESH_CDN = (file) =>
   `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
 
+// 카메라 캡처 해상도. Camera 설정과 단일 출처로 공유하고, 증거 페이로드의
+// frame_w/frame_h 메타로도 실어 보낸다. (landmark 는 정규화 좌표라 기하 계산엔 무관)
+const CAMERA_WIDTH = 480;
+const CAMERA_HEIGHT = 480;
+
+// 원시 랜드마크 증거 버퍼링 파라미터 (A1).
+const EVIDENCE_FPS = 15;
+const EVIDENCE_MIN_INTERVAL_MS = 1000 / EVIDENCE_FPS; // 15fps 다운샘플
+const MAX_EVIDENCE_FRAMES = 150; // instruction당 상한 = 15fps × 10s
+
 
 export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded = false }) {
   // DOM
@@ -126,6 +136,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   const startedAtRef = useRef(Date.now());
   const submittedRef = useRef(false);
   const advanceTimerRef = useRef(null);
+  const evidenceRef = useRef([]); // instruction별 증거 버퍼 [{type, frames:[{t, landmarks}]}]
+  const lastEvidenceAtRef = useRef(0); // 마지막 증거 기록 시각 (다운샘플 throttle)
 
   // 렌더 트리거용 상태
   const [detectionStatus, setDetectionStatus] = useState('initializing');
@@ -160,6 +172,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     progressStartedAtRef.current = null;
     noseHistoryRef.current = [];
     completedRef.current = [];
+    evidenceRef.current = [];
+    lastEvidenceAtRef.current = 0;
     submittedRef.current = false;
     startedAtRef.current = Date.now();
     setCurrentInstructionIndex(0);
@@ -225,8 +239,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           if (!cancelled) console.warn('faceMesh.send failed:', err);
         }
       },
-      width: 480,
-      height: 480,
+      width: CAMERA_WIDTH,
+      height: CAMERA_HEIGHT,
     });
     cameraRef.current = camera;
 
@@ -309,6 +323,21 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
     if (!inst) return;
 
+    // 원시 랜드마크 증거 기록 (A1). detected/게이지와 독립 — 얼굴이 검출되고 active
+    // instruction 이 있는 프레임을 15fps 로 다운샘플해 누적한다(서버 기하검증의 입력).
+    const nowMs = Date.now(); // noseHistory(아래 push)와 동일 시간원
+    if (nowMs - lastEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
+      let buf = evidenceRef.current[idx];
+      if (!buf || buf.type !== inst.type) {
+        buf = { type: inst.type, completed_at_t: null, frames: [] };
+        evidenceRef.current[idx] = buf;
+      }
+      if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
+        buf.frames.push({ t: nowMs, landmarks: extractEvidence(lm) });
+      }
+      lastEvidenceAtRef.current = nowMs;
+    }
+
     // 동작 검출 + 진행도 누적
     const detected = detectInstruction(inst.type, lm, noseHistoryRef.current);
     setDetectionStatus(detected ? 'instruction_active' : 'no_face');
@@ -324,6 +353,10 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       if (elapsed >= target) {
         // 단계 완료
         completedRef.current.push(inst.type);
+        // 완료 시각 기록 (증거 프레임 t 와 동일 시간원 nowMs). 마지막 지시면 바로 아래
+        // onSubmit 이 호출되므로 페이로드 조립 전에 set 되어야 한다.
+        const evEntry = evidenceRef.current[idx];
+        if (evEntry) evEntry.completed_at_t = nowMs;
         progressStartedAtRef.current = null;
         setProgressFraction(0);
         setDetectionStatus('instruction_complete');
@@ -337,6 +370,19 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             face_behavioral_data: {
               time_taken_ms: Date.now() - startedAtRef.current,
               steps_count: currentSpec.instructions.length,
+              evidence_version: 1,
+              frame_w: CAMERA_WIDTH,
+              frame_h: CAMERA_HEIGHT,
+              face_evidence: {
+                instructions: evidenceRef.current
+                  .filter(Boolean)
+                  .map((b) => ({
+                    type: b.type,
+                    completed_at_t: b.completed_at_t ?? null,
+                    frames: b.frames,
+                  })),
+              },
+              hand_evidence: null,
             },
           });
         } else {

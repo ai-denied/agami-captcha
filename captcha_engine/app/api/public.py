@@ -43,9 +43,9 @@ from app.captcha.mlops_formatter import to_training_sessions
 from app.captcha.verifier import (
     baseline_verdict,
     check_context_hit,
-    check_face_hit,
     check_flashlight_hit,
 )
+from app.captcha.face_evidence import check_face_evidence
 from app.core.config import get_settings
 from app.core.security import (
     hash_secret,
@@ -192,8 +192,9 @@ async def submit_answer(
             settings=settings,
         )
     elif answer.kind == ChallengeKind.FACE_MISSION:
-        # MediaPipe 합류 전까지의 임시 검증: 클라이언트 보고와 expected 가 일치하는지.
-        hit = check_face_hit(answer, body.completed_instructions)
+        # A2: 위젯이 보낸 원시 랜드마크 증거(face_behavioral_data.face_evidence)를 서버가
+        # 위젯 식(EAR/yaw/smile/nod)으로 재검증. 라벨 echo(check_face_hit) 대체 — echo 우회 차단.
+        hit = check_face_evidence(answer, body.face_behavioral_data)
     elif answer.kind == ChallengeKind.CONTEXT_INFERENCE:
         if body.submitted_answers is None:
             raise HTTPException(
