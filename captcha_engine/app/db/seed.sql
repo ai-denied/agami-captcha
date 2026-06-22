@@ -34,17 +34,9 @@ UPDATE tenant_settings
 SET enabled_kinds = '["flashlight","face_mission","context_inference"]'::jsonb
 WHERE tenant_id = '11111111-1111-1111-1111-111111111111';
 
--- HTTPS 전환 시 https:// 도 함께 추가해야 함 (docs/HTTPS_MIGRATION.md 참고).
-INSERT INTO allowed_origins (tenant_id, origin)
-VALUES
-  ('11111111-1111-1111-1111-111111111111', 'http://localhost:5173'),
-  ('11111111-1111-1111-1111-111111111111', 'http://localhost:3000'),
-  ('11111111-1111-1111-1111-111111111111', 'http://localhost:8000'),
-  ('11111111-1111-1111-1111-111111111111', 'http://127.0.0.1:8000'),
-  ('11111111-1111-1111-1111-111111111111', 'http://localhost:8001'),
-  ('11111111-1111-1111-1111-111111111111', 'http://210.109.53.140')
-ON CONFLICT (tenant_id, origin) DO NOTHING;
-
+-- api_keys 를 allowed_origins 보다 먼저 시드한다.
+-- 이유: allowed_origins.api_key_id 가 이 api_key 의 id 를 FK 로 참조하고, 아래
+-- allowed_origins INSERT 의 서브쿼리도 이 행을 읽으므로 순서상 반드시 앞서야 한다.
 INSERT INTO api_keys (tenant_id, name, client_key, secret_hash)
 VALUES (
   '11111111-1111-1111-1111-111111111111',
@@ -53,3 +45,23 @@ VALUES (
   '2ff33a43651c0773973a569c635e19f4d41f373a76ae7734d1ccd73d0185892d'
 )
 ON CONFLICT (client_key) DO NOTHING;
+
+-- allowed_origins: verify_origin(deps.py:88-91) 이
+--   WHERE api_key_id = <ck_test.id> AND origin = <Origin 헤더>
+-- 으로 정확매칭하며 NULL fallback 이 없다. 따라서 각 dev origin 을 ck_test api_key 의
+-- id 로 묶어야 통과한다(api_key_id 가 NULL 이면 매칭 실패 → 403).
+-- HTTPS 전환 시 https:// 도 함께 추가해야 함 (docs/HTTPS_MIGRATION.md 참고).
+INSERT INTO allowed_origins (tenant_id, api_key_id, origin)
+SELECT
+  '11111111-1111-1111-1111-111111111111',
+  (SELECT id FROM api_keys WHERE client_key = 'ck_test'),
+  o.origin
+FROM (VALUES
+  ('http://localhost:5173'),
+  ('http://localhost:3000'),
+  ('http://localhost:8000'),
+  ('http://127.0.0.1:8000'),
+  ('http://localhost:8001'),
+  ('http://210.109.53.140')
+) AS o(origin)
+ON CONFLICT (tenant_id, origin) DO NOTHING;

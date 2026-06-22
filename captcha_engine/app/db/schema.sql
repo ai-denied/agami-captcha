@@ -61,6 +61,10 @@ CREATE INDEX idx_api_keys_tenant_id ON api_keys(tenant_id);
 CREATE TABLE allowed_origins (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID          NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    -- API 키 단위 도메인 관리 고리. models.py AllowedOrigin.api_key_id 와 1:1
+    -- (UUID, nullable, FK→api_keys(id) ON DELETE CASCADE). verify_origin(deps.py:88)
+    -- 이 이 컬럼으로 정확매칭한다. 모델에 인덱스/제약이 없으므로 여기서도 추가하지 않음.
+    api_key_id      UUID          REFERENCES api_keys(id) ON DELETE CASCADE,
     origin          VARCHAR(255)  NOT NULL,
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, origin)
