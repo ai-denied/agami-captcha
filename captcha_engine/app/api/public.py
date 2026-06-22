@@ -214,13 +214,6 @@ async def submit_answer(
 
     # 4. 검증 결과를 Postgres 에 기록 (대시보드 통계의 원천)
     behavioral_summary = body.behavioral_data.model_dump() if body.behavioral_data else None
-    logger.warning(
-        "DEBUG_IP_HEADERS loc=submit xff=%s xri=%s forwarded=%s client=%s",
-        request.headers.get("X-Forwarded-For"),
-        request.headers.get("X-Real-IP"),
-        request.headers.get("Forwarded"),
-        request.client.host if request.client else None,
-    )
     db.add(Verification(
         challenge_id=challenge_id,
         tenant_id=api_key.tenant_id,
@@ -398,13 +391,6 @@ async def _flashlight_submit_bundle(
         else:
             attack_type = "coordinate_brute"
 
-    logger.warning(
-        "DEBUG_IP_HEADERS loc=bundle xff=%s xri=%s forwarded=%s client=%s",
-        request.headers.get("X-Forwarded-For"),
-        request.headers.get("X-Real-IP"),
-        request.headers.get("Forwarded"),
-        request.client.host if request.client else None,
-    )
     db.add(Verification(
         challenge_id=challenge_id,
         tenant_id=api_key.tenant_id,
