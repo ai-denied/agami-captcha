@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from urllib.parse import urlparse
 
 import jwt
 import redis.asyncio as redis_async
@@ -71,6 +72,26 @@ async def verify_client_key(
     return api_key
 
 
+def _origin_matches(allowed: str, incoming: str) -> bool:
+    """등록 origin(allowed)에 대해 요청 origin(incoming)이 매칭되는지 판정.
+
+    통상 캡차 방식: 스킴 일치 + (hostname 정확일치 OR 서브도메인). 포트/경로는 무시.
+    - 스킴이 다르면 거부 (https 등록 → http 요청 다운그레이드 차단).
+    - hostname 정확일치 또는 점(.) 경계 서브도메인만 허용.
+      → app.example.com 은 example.com 에 매칭, evilexample.com / example.com.evil.com 은 매칭 안 됨.
+    - 어느 쪽이든 hostname 이 비었으면(파싱 실패 포함) 거부.
+    urlparse.hostname 은 포트를 제외하고 소문자로 정규화한다.
+    """
+    a = urlparse(allowed)
+    i = urlparse(incoming)
+    if a.scheme != i.scheme:
+        return False
+    a_host, i_host = a.hostname, i.hostname
+    if not a_host or not i_host:
+        return False
+    return i_host == a_host or i_host.endswith("." + a_host)
+
+
 async def verify_origin(
     request: Request,
     api_key: ApiKey = Depends(verify_client_key),
@@ -79,17 +100,16 @@ async def verify_origin(
     """
     Origin 헤더가 해당 api_key(프로젝트)의 allowed_origins 화이트리스트에 있는지 확인.
     Origin 이 없는 요청 (서버-서버, curl 테스트 등) 은 통과.
+    정확일치 + 서브도메인 자동 포함 (_origin_matches 참고).
     """
     origin = request.headers.get("origin")
     if not origin:
         return api_key
 
-    # 수정됨: tenant_id가 아닌 api_key_id를 기준으로 정확한 프로젝트 도메인 검증
-    stmt = select(AllowedOrigin).where(
-        AllowedOrigin.api_key_id == api_key.id,
-        AllowedOrigin.origin == origin,
-    )
-    if (await db.execute(stmt)).scalar_one_or_none() is None:
+    # 수정됨: tenant_id가 아닌 api_key_id를 기준으로 프로젝트 도메인 목록을 가져와 매칭
+    stmt = select(AllowedOrigin.origin).where(AllowedOrigin.api_key_id == api_key.id)
+    allowed_list = (await db.execute(stmt)).scalars().all()
+    if not any(_origin_matches(allowed, origin) for allowed in allowed_list):
         raise HTTPException(
             status_code=403,
             detail={
