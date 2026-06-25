@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { detectInstruction, extractEvidence } from '../lib/faceDetection';
+import { detectHandGesture, extractHandEvidence, spread, pinchRatio } from '../lib/handDetection';
 import FishTimer from './FishTimer';
 
 // =============================================================================
@@ -16,6 +17,7 @@ const g = /** @type {any} */ (globalThis);
 
 const MP_CDN_SCRIPTS = [
   'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js',
+  'https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js',
   'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js',
   'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
 ];
@@ -55,8 +57,12 @@ function loadMediaPipe() {
     Promise.all(MP_CDN_SCRIPTS.map(loadScript))
       .then(() => {
         clearTimeout(timer);
-        if (typeof g.FaceMesh !== 'function' || typeof g.Camera !== 'function') {
-          return reject(new Error('FaceMesh/Camera not registered after CDN load'));
+        if (
+          typeof g.FaceMesh !== 'function'
+          || typeof g.Camera !== 'function'
+          || typeof g.Hands !== 'function'
+        ) {
+          return reject(new Error('FaceMesh/Hands/Camera not registered after CDN load'));
         }
         resolve();
       })
@@ -98,6 +104,13 @@ const ICON_FOR = {
   nod: '🙇',
 };
 
+// A3: 손동작 지시 아이콘 (ICON_FOR 와 동형, 추가).
+const HAND_ICON_FOR = {
+  open_hand: '🖐️',
+  fist: '✊',
+  pinch: '🤏',
+};
+
 const COLOR_BLUE = '#4a8bff';
 const COLOR_YELLOW = '#fbbf24';
 const COLOR_WHITE = 'rgba(255, 255, 255, 0.95)';
@@ -105,6 +118,9 @@ const COLOR_WHITE = 'rgba(255, 255, 255, 0.95)';
 // MediaPipe WASM/asset CDN. 패키지 버전과 일치하는 디렉터리를 가리킴.
 const MP_FACE_MESH_CDN = (file) =>
   `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+// A3: Hands WASM/asset CDN (face 와 동형).
+const MP_HANDS_CDN = (file) =>
+  `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
 
 // 카메라 캡처 해상도. Camera 설정과 단일 출처로 공유하고, 증거 페이로드의
 // frame_w/frame_h 메타로도 실어 보낸다. (landmark 는 정규화 좌표라 기하 계산엔 무관)
@@ -125,6 +141,19 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   // MediaPipe 인스턴스
   const faceMeshRef = useRef(null);
   const cameraRef = useRef(null);
+  const handsRef = useRef(null); // A3: MediaPipe Hands (face 와 병렬)
+  // A3[2] FPS 계측 — face+hand 동시 송신의 실효 처리율 측정용.
+  const fpsCountRef = useRef(0);
+  const fpsWindowStartRef = useRef(0);
+  const fpsSendMsRef = useRef(0);
+  // A3[3]: hand 트랙 상태 (face refs 와 동형, 병렬). face refs 는 무수정.
+  const handIdxRef = useRef(0);
+  const handProgressStartedAtRef = useRef(null);
+  const handCompletedRef = useRef([]);
+  const handEvidenceRef = useRef([]); // [{type, completed_at_t, frames:[{t, landmarks}]}]
+  const lastHandEvidenceAtRef = useRef(0);
+  const faceAllDoneRef = useRef(false); // 마지막 face 지시 완료 여부
+  const handAllDoneRef = useRef(false); // 마지막 hand 지시 완료 여부 (hand 없으면 true)
 
   // 콜백/상태 미러 ref (onResults 안에서 stale closure 회피)
   const onSubmitRef = useRef(onSubmit);
@@ -144,10 +173,16 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   // initializing | no_face | instruction_active | instruction_complete | denied | error
   const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
   const [progressFraction, setProgressFraction] = useState(0);
+  const [currentHandIndex, setCurrentHandIndex] = useState(0); // A3: hand 지시 인덱스
+  const [handDetected, setHandDetected] = useState(false); // A3: 현재 hand 제스처 충족 표시
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
   const [hintVisible, setHintVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
-  const [mpReady, setMpReady] = useState(typeof g.FaceMesh === 'function' && typeof g.Camera === 'function');
+  const [mpReady, setMpReady] = useState(
+    typeof g.FaceMesh === 'function'
+    && typeof g.Camera === 'function'
+    && typeof g.Hands === 'function',
+  );
 
   // MediaPipe CDN 사전 로딩 (마운트 1회). 이미 로드돼있으면 즉시 ready.
   useEffect(() => {
@@ -175,9 +210,19 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     evidenceRef.current = [];
     lastEvidenceAtRef.current = 0;
     submittedRef.current = false;
+    // A3: hand 트랙 리셋 (face 와 동형). hand 없는 spec 이면 handAllDone=true(하위호환).
+    handIdxRef.current = 0;
+    handProgressStartedAtRef.current = null;
+    handCompletedRef.current = [];
+    handEvidenceRef.current = [];
+    lastHandEvidenceAtRef.current = 0;
+    faceAllDoneRef.current = false;
+    handAllDoneRef.current = !(spec?.hand_instructions && spec.hand_instructions.length > 0);
     startedAtRef.current = Date.now();
     setCurrentInstructionIndex(0);
     setProgressFraction(0);
+    setCurrentHandIndex(0);
+    setHandDetected(false);
     setTimeLeft(spec?.time_limit_sec ?? 30);
     setHintVisible(false);
   }, [spec]);
@@ -229,14 +274,51 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     faceMesh.onResults((results) => handleResults(results, canvas, ctx));
     faceMeshRef.current = faceMesh;
 
+    // A3[2]: Hands 를 face 와 병렬로 생성. face 검출 로직(handleResults/faceDetection)
+    // 은 무수정 — hands 는 추가만. 이 단계는 토대 확인용으로 제스처/FPS 를 콘솔에 로그.
+    const hands = new g.Hands({ locateFile: MP_HANDS_CDN });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
+    });
+    hands.onResults(handleHandResults);
+    handsRef.current = hands;
+
     const camera = new g.Camera(video, {
       onFrame: async () => {
         if (cancelled || !faceMeshRef.current) return;
+        const t0 = performance.now();
         try {
           await faceMeshRef.current.send({ image: video });
+          // A3[2]: face + hand 동시 송신. 둘 다 await. hands 는 추가만.
+          if (handsRef.current) {
+            await handsRef.current.send({ image: video });
+          }
         } catch (err) {
           // 모델이 닫힌 후 들어오는 마지막 frame 등은 무시
-          if (!cancelled) console.warn('faceMesh.send failed:', err);
+          if (!cancelled) console.warn('mp send failed:', err);
+        }
+        // A3[2] FPS 계측: face+hand 동시 처리의 실효 fps 를 1초 창마다 콘솔 출력.
+        // 15fps(EVIDENCE_FPS) 미만이면 증거 다운샘플 목표 미달 → modelComplexity:0
+        // 또는 프레임 교대 대안 검토 필요(보고 참조).
+        const t1 = performance.now();
+        fpsSendMsRef.current += t1 - t0;
+        fpsCountRef.current += 1;
+        if (fpsWindowStartRef.current === 0) fpsWindowStartRef.current = t1;
+        const elapsed = t1 - fpsWindowStartRef.current;
+        if (elapsed >= 1000) {
+          const fps = (fpsCountRef.current * 1000) / elapsed;
+          const avgMs = fpsSendMsRef.current / fpsCountRef.current;
+          console.log(
+            `[A3 FPS] face+hand 동시: ${fps.toFixed(1)} fps `
+            + `(평균 ${avgMs.toFixed(1)} ms/frame, frames=${fpsCountRef.current}) `
+            + (fps < EVIDENCE_FPS ? `⚠️ < ${EVIDENCE_FPS}fps` : '✓'),
+          );
+          fpsCountRef.current = 0;
+          fpsSendMsRef.current = 0;
+          fpsWindowStartRef.current = t1;
         }
       },
       width: CAMERA_WIDTH,
@@ -268,8 +350,10 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       }
       try { camera.stop(); } catch (_) {}
       try { faceMesh.close(); } catch (_) {}
+      try { hands.close(); } catch (_) {}
       faceMeshRef.current = null;
       cameraRef.current = null;
+      handsRef.current = null;
       // Camera 클래스가 만든 stream 도 명시적으로 해제 (LED off 보장)
       const stream = video.srcObject;
       if (stream && typeof stream.getTracks === 'function') {
@@ -280,6 +364,128 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       video.srcObject = null;
     };
   }, [mpReady]);
+
+  // ---------------------------------------------------------------------------
+  // A3[3]: face·hand 둘 다 완료됐을 때만 1회 제출. face 완료(handleResults)와
+  // hand 완료(handleHandResults)가 각각 호출하고, 두 트랙 모두 끝났을 때 제출한다
+  // (기획: 둘 다 만족해야 클리어). 서버는 face_hit AND hand_hit 로 각각 검증.
+  // ---------------------------------------------------------------------------
+  function maybeSubmit() {
+    if (submittedRef.current) return;
+    if (!faceAllDoneRef.current || !handAllDoneRef.current) return;
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
+    submittedRef.current = true;
+    onSubmitRef.current({
+      completed_instructions: [...completedRef.current],
+      face_behavioral_data: {
+        time_taken_ms: Date.now() - startedAtRef.current,
+        steps_count: currentSpec.instructions.length,
+        evidence_version: 1,
+        frame_w: CAMERA_WIDTH,
+        frame_h: CAMERA_HEIGHT,
+        face_evidence: {
+          instructions: evidenceRef.current
+            .filter(Boolean)
+            .map((b) => ({
+              type: b.type,
+              completed_at_t: b.completed_at_t ?? null,
+              frames: b.frames,
+            })),
+        },
+        hand_evidence: {
+          instructions: handEvidenceRef.current
+            .filter(Boolean)
+            .map((b) => ({
+              type: b.type,
+              completed_at_t: b.completed_at_t ?? null,
+              frames: b.frames,
+            })),
+        },
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // A3[3] hand 결과 콜백 (hands.onResults). face handleResults 와 동형이되 hand refs
+  // 에만 쓴다 — face 검출/표시/evidence 로직과 완전 독립. 기대 hand 제스처를
+  // duration_sec 연속 유지하면 해당 hand 지시 완료 → completed_at_t 기록 → maybeSubmit.
+  // ---------------------------------------------------------------------------
+  function handleHandResults(results) {
+    if (submittedRef.current) return;
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
+
+    const handInsts = currentSpec.hand_instructions || [];
+    if (handInsts.length === 0) {
+      handAllDoneRef.current = true; // hand 미요구 spec → 즉시 완료(하위호환)
+      maybeSubmit();
+      return;
+    }
+
+    const idx = handIdxRef.current;
+    const inst = handInsts[idx];
+    if (!inst) {
+      handAllDoneRef.current = true;
+      maybeSubmit();
+      return;
+    }
+
+    const lm = results.multiHandLandmarks?.[0];
+    if (!lm) {
+      // 손 미검출 → 진행 리셋 (face no_face 와 동형)
+      handProgressStartedAtRef.current = null;
+      setHandDetected(false);
+      return;
+    }
+
+    // 원시 hand 랜드마크 증거 기록 (face evidence 와 동형, 15fps 다운샘플).
+    const nowMs = Date.now();
+    const gesture = detectHandGesture(lm);
+    if (nowMs - lastHandEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
+      let buf = handEvidenceRef.current[idx];
+      if (!buf || buf.type !== inst.type) {
+        buf = { type: inst.type, completed_at_t: null, frames: [] };
+        handEvidenceRef.current[idx] = buf;
+      }
+      if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
+        buf.frames.push({ t: nowMs, landmarks: extractHandEvidence(lm) });
+      }
+      lastHandEvidenceAtRef.current = nowMs;
+      // 디버그(fist 임계 캘리브레이션용): gesture=null 이어도 spread/pinch 출력.
+      console.log(
+        `[A3 hand] expect=${inst.type} got=${gesture ?? 'null'} `
+        + `spread=${spread(lm).toFixed(3)} pinch=${pinchRatio(lm).toFixed(3)}`,
+      );
+    }
+
+    // 제스처 검출 + 연속 유지 (face 게이지와 동형).
+    const detected = gesture === inst.type;
+    setHandDetected(detected);
+    if (detected) {
+      if (handProgressStartedAtRef.current == null) {
+        handProgressStartedAtRef.current = Date.now();
+      }
+      const elapsed = Date.now() - handProgressStartedAtRef.current;
+      const target = inst.duration_sec * 1000;
+      if (elapsed >= target) {
+        handCompletedRef.current.push(inst.type);
+        const evEntry = handEvidenceRef.current[idx];
+        if (evEntry) evEntry.completed_at_t = nowMs;
+        handProgressStartedAtRef.current = null;
+        const nextIdx = idx + 1;
+        if (nextIdx >= handInsts.length) {
+          handAllDoneRef.current = true;
+          maybeSubmit();
+        } else {
+          handIdxRef.current = nextIdx;
+          setCurrentHandIndex(nextIdx);
+        }
+      }
+    } else if (handProgressStartedAtRef.current != null) {
+      handProgressStartedAtRef.current = null;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // onResults : 매 프레임 호출 (faceMesh.onResults 콜백)
@@ -363,28 +569,11 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
         const nextIdx = idx + 1;
         if (nextIdx >= currentSpec.instructions.length) {
-          // 마지막 지시 → 제출 1회
-          submittedRef.current = true;
-          onSubmitRef.current({
-            completed_instructions: [...completedRef.current],
-            face_behavioral_data: {
-              time_taken_ms: Date.now() - startedAtRef.current,
-              steps_count: currentSpec.instructions.length,
-              evidence_version: 1,
-              frame_w: CAMERA_WIDTH,
-              frame_h: CAMERA_HEIGHT,
-              face_evidence: {
-                instructions: evidenceRef.current
-                  .filter(Boolean)
-                  .map((b) => ({
-                    type: b.type,
-                    completed_at_t: b.completed_at_t ?? null,
-                    frames: b.frames,
-                  })),
-              },
-              hand_evidence: null,
-            },
-          });
+          // A3: 마지막 face 지시 완료 → face 트랙 완료 표시. 실제 제출은 hand 까지
+          // 끝난 뒤 maybeSubmit 이 1회 수행한다(둘 다 만족해야 클리어 — 기획).
+          // 위 face 검출/게이지/evidence(completed_at_t 포함) 로직은 무수정.
+          faceAllDoneRef.current = true;
+          maybeSubmit();
         } else {
           // 0.6s 동안 체크마크 보여주고 다음 단계로
           if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
@@ -408,6 +597,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
   const totalSteps = spec.instructions.length;
   const currentInstruction = spec.instructions[currentInstructionIndex];
+  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; // A3
   const isCompleteFlash = detectionStatus === 'instruction_complete';
 
   // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
@@ -477,6 +667,23 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
                 </span>
                 <span className="text-white/60 text-xs">
                   ({currentInstruction.duration_sec}s)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* A3: 손동작 지시 (얼굴 줄 아래에 동시 표시 — face pill 무수정, 추가). */}
+          {currentHandInstruction && (
+            <div className="absolute top-[3.75rem] left-3 right-3 flex justify-center pointer-events-none">
+              <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${handDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
+                <span className="text-xl leading-none">
+                  {HAND_ICON_FOR[currentHandInstruction.type] ?? '✋'}
+                </span>
+                <span className="text-white font-bold text-sm">
+                  손: {currentHandInstruction.label}
+                </span>
+                <span className="text-white/60 text-xs">
+                  {handDetected ? '감지됨 ✓' : `(${currentHandInstruction.duration_sec}s)`}
                 </span>
               </div>
             </div>
