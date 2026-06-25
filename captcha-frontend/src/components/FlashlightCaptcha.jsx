@@ -193,9 +193,6 @@ export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, e
               <span className="font-bold text-[#2563eb] text-sm">{currentSub.target_hint.label}</span>
             </div>
           </div>
-          <div className="text-xs text-[#8a96ad]">
-            난이도 · <span className="text-[#4a8bff] font-bold uppercase">{spec.difficulty}</span>
-          </div>
         </div>
 
         {/* Image canvas — 모든 데이터셋 이미지가 800x600 (4:3) 로 통일됨.
@@ -237,17 +234,6 @@ export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, e
               transform: 'translate(0px, 0px) translate(-50%, -50%)',
             }}
           />
-
-          <div className="absolute top-3.5 right-3.5 bg-white/10 backdrop-blur px-3 py-1.5 rounded-full text-[11px] text-white/70 flex items-center gap-1.5 pointer-events-none">
-            <span className="w-1.5 h-1.5 bg-amber-400 rounded-full" />
-            마우스로 손전등 조작
-          </div>
-
-          {hintVisible && (
-            <div className="absolute bottom-3.5 left-1/2 -translate-x-1/2 bg-amber-400/90 text-amber-950 px-4 py-1.5 rounded-full text-xs font-bold pointer-events-none">
-              💡 천천히 둘러보세요
-            </div>
-          )}
         </div>
 
         <FishTimer
