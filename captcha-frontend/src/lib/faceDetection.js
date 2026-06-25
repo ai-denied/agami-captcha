@@ -208,11 +208,18 @@ export function detectInstruction(type, landmarks, noseHistory) {
 // yaw(코끝·양 광대) + smile(입 4점) + nod(코끝, 이미 포함) 에 쓰이는 인덱스의
 // 중복 제거 집합이며, 위 상수들에서 파생한다(직접 하드코딩 금지).
 
+// ML feature 추출용 코끝 인덱스. ML extract_features_time_norm.py 의 NOSE_TIP_IDX=4
+// 와 정합되며, /predict 피처 추출(nose_x_rel, nose_y_rel, yaw, nose_dx_tn,
+// nose_speed_tn 등)용으로 증거에만 ADDITIVE 로 담는다.
+// echo 검증용 NOSE_TIP=1(line 25; _yaw/nod 등 A2 와 1:1)과는 별개이며 1은 그대로 유지.
+const NOSE_TIP_FEATURE = 4;
+
 export const EVIDENCE_INDICES = [
   ...new Set([
     ...LEFT_EYE_EAR_INDICES,
     ...RIGHT_EYE_EAR_INDICES,
-    NOSE_TIP,
+    NOSE_TIP,          // 1 — echo 검증용(A2 _yaw/nod 와 1:1). 유지.
+    NOSE_TIP_FEATURE,  // 4 — /predict 피처 추출용. ADDITIVE (1과 공존).
     IMG_LEFT_CHEEK,
     IMG_RIGHT_CHEEK,
     MOUTH_LEFT,
