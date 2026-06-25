@@ -4,17 +4,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 // FishTimer
 // -----------------------------------------------------------------------------
 // 왼쪽 봇 ─ 출렁이는 sine wave 트랙 ─ 곡선 위에 올라타 헤엄치는 물고기.
-// 물고기는 곡선 기울기에 따라 머리 각도가 부드럽게 회전.
-// 시간이 줄면 트랙이 물고기 입 쪽으로 짧아지고, 물고기는 봇 쪽으로 다가온다.
-// 봇 도달 시 chomp 진동 → 봇이 시계반대 2바퀴 회전+축소+페이드아웃 → 물고기 1.6배.
-//
-// 60fps 부드러운 모션: prop 의 remainingMs 가 1Hz 로만 갱신되지만, 컴포넌트 내부에서
-// performance.now() 로 보간하여 매 rAF 프레임에 미세하게 갱신.
-//
-// Props
-//   remainingMs : 남은 시간 (ms)
-//   totalMs     : 전체 시간 (ms) — 변경 시 새 챌린지로 간주, 'swimming' 리셋.
-//   className   : 컨테이너 추가 클래스 (마진 등)
+// 시간이 줄면 트랙이 짧아지고, 물고기는 봇 쪽으로 다가온다.
+// 봇 도달 시 물고기가 풍선처럼 펑 하고 터지는(Pop) 애니메이션 적용.
 // =============================================================================
 
 const BOT_WIDTH_PX = 50;
@@ -24,17 +15,16 @@ const CURVE_AMPLITUDE_PX = 10;          // sin 진폭
 const CURVE_PERIOD_PX = 120;            // sin 주기
 const CONTAINER_HEIGHT_PX = 64;         // h-16
 const MID_Y = CONTAINER_HEIGHT_PX / 2;
-const FISH_SCALE_FED = 1.6;             // 먹기 후 물고기 크기
-const SCALE_TRANSITION_MS = 2100;       // unmount 전에 시각적으로 fully grown 도달
-const ROTATE_TRANSITION_MS = 200;       // 회전 lag (잔잔한 smoothing)
-const CHOMP_DURATION_MS = 200;          // CSS keyframe 1회 길이 (× 2 iterations = 400ms)
-const CHOMP_ITERATIONS = 2;
+
+// --- 변경된 애니메이션 설정 ---
+const FISH_SCALE_POP = 2.5;             // 펑 터질 때 커지는 최대 배율
+const POP_DURATION_MS = 150;            // 터지는 시간 (150ms로 매우 빠르고 타격감 있게)
+const ROTATE_TRANSITION_MS = 200;       // 회전 lag
 const EATING_DURATION_MS = 2500;
-const BOT_DISAPPEAR_MS = 1500;
 const EATING_THRESHOLD_FALLBACK = 0.15;
 const PATH_STEP_PX = 4;                 // SVG line segment 간격
 
-// 곡선 수식 — fish 위치 / 회전 / SVG path 가 모두 같은 함수에서 파생되어 정확히 일치.
+// 곡선 수식
 function curveY(x) {
   return MID_Y + CURVE_AMPLITUDE_PX
     * Math.sin(2 * Math.PI * (x - BOT_WIDTH_PX) / CURVE_PERIOD_PX);
@@ -45,7 +35,6 @@ function curveSlope(x) {
     * Math.cos(2 * Math.PI * (x - BOT_WIDTH_PX) / CURVE_PERIOD_PX);
 }
 
-// 곡선 path 를 line segment 들로 근사. step=4px 면 시각적으로 충분히 부드러움.
 function buildCurvePath(startX, endX, step) {
   if (endX <= startX) return '';
   let d = `M ${startX.toFixed(2)} ${curveY(startX).toFixed(2)}`;
@@ -59,13 +48,12 @@ function buildCurvePath(startX, endX, step) {
 export default function FishTimer({ remainingMs, totalMs, className = '' }) {
   const uid = useId().replace(/:/g, '');
 
-  const [phase, setPhase] = useState('swimming'); // 'swimming' | 'eating' | 'fed'
+  const [phase, setPhase] = useState('swimming'); // 'swimming' | 'popped'
   const [reduceMotion, setReduceMotion] = useState(false);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [, setTick] = useState(0);                 // rAF 가 강제 리렌더용으로만 사용
+  const [, setTick] = useState(0);
 
   const containerRef = useRef(null);
-  // 1Hz prop 사이를 60fps 로 보간하기 위한 기준점.
   const baseRemainingMsRef = useRef(remainingMs);
   const baseTsRef = useRef(performance.now());
   const rafRef = useRef(null);
@@ -80,7 +68,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
     return () => mq.removeEventListener?.('change', handler);
   }, []);
 
-  // 2) 컨테이너 width — 첫 paint 전 측정 + ResizeObserver 로 추적
+  // 2) 컨테이너 width
   useLayoutEffect(() => {
     if (containerRef.current) setContainerWidth(containerRef.current.offsetWidth);
   }, []);
@@ -93,18 +81,18 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
     return () => ro.disconnect();
   }, []);
 
-  // 3) prop 의 remainingMs 가 갱신될 때마다 보간 기준점 새로고침
+  // 3) prop remainingMs 갱신
   useEffect(() => {
     baseRemainingMsRef.current = remainingMs;
     baseTsRef.current = performance.now();
   }, [remainingMs]);
 
-  // 4) totalMs 변경 → 새 챌린지, phase 리셋
+  // 4) totalMs 변경 시 리셋
   useEffect(() => {
     setPhase('swimming');
   }, [totalMs]);
 
-  // 5) rAF 루프 — swimming + !reduceMotion 동안만 60fps 강제 리렌더
+  // 5) rAF 루프
   useEffect(() => {
     if (reduceMotion || phase !== 'swimming') return;
     const loop = () => {
@@ -118,9 +106,6 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
     };
   }, [phase, reduceMotion]);
 
-  // ---------------------------------------------------------------------
-  // 보간된 effective remaining ms 계산 (매 렌더마다 performance.now() 읽음)
-  // ---------------------------------------------------------------------
   const now = performance.now();
   const elapsedSinceBase = now - baseTsRef.current;
   const effectiveRemainingMs = reduceMotion
@@ -139,66 +124,47 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
     ? (progress - eatingThreshold) / (1 - eatingThreshold)
     : 0;
 
-  // 6) phase 전환
+  // 6) 봇에 도달 시 터지는(Pop) 페이즈로 전환
   useEffect(() => {
     if (phase !== 'swimming') return;
     if (progress <= eatingThreshold) {
-      setPhase('eating');
-      const t = setTimeout(
-        () => setPhase('fed'),
-        CHOMP_DURATION_MS * CHOMP_ITERATIONS,
-      );
-      return () => clearTimeout(t);
+      setPhase('popped');
     }
   }, [progress, phase, eatingThreshold]);
 
   // ---------------------------------------------------------------------
   // 렌더용 파생값
   // ---------------------------------------------------------------------
-  const fishScale = phase === 'swimming' ? 1.0 : FISH_SCALE_FED;
-
   const trackSpan = Math.max(1, containerWidth - BOT_WIDTH_PX);
   const fishLeft = BOT_WIDTH_PX + trackSpan * visualProgress;
 
-  // 곡선 라이딩은 swimming + !reduceMotion 일 때만. eating/fed/reduceMotion 은 직선상.
   const onCurve = phase === 'swimming' && !reduceMotion;
   const fishTop = onCurve ? curveY(fishLeft) : MID_Y;
 
-  // 회전각 — 곡선 접선 (사용자 관점: 곡선이 오를 때 머리 위로, 내릴 때 머리 아래로)
-  // 부호 컨벤션 (사용자 시각 테스트로 확정):
-  //   fish 가 진행하면서 위로 올라가는 중 → 머리 위 (negative CSS rotate = CCW)
-  //   fish 가 진행하면서 아래로 내려가는 중 → 머리 아래 (positive CSS rotate = CW)
-  // fish 는 우→좌 이동 → 좌측 방향의 곡선 기울기가 head 방향. dy/d(-x) = -slope.
-  // CSS rotate(positive) 시 fish 머리가 진행 방향(좌측 + 아래) 으로 기울게 하려면
-  // angleDeg = +atan(slope) (이전 -atan 의 부호 반전).
   const slopeAtFish = onCurve ? curveSlope(fishLeft) : 0;
   const angleDeg = Math.atan(slopeAtFish) * 180 / Math.PI;
 
-  // 트랙 끝 = fish 입 위치
   const mouthFromCenterPx = FISH_SIZE_PX / 2 - FISH_MOUTH_OFFSET_PX;
   const trackEndX = Math.max(BOT_WIDTH_PX, fishLeft - mouthFromCenterPx);
 
-  // 동적 path — BOT 에서 fish 의 입까지만. 나머지는 그리지 않음.
   const pathD = containerWidth > BOT_WIDTH_PX && trackEndX > BOT_WIDTH_PX
     ? buildCurvePath(BOT_WIDTH_PX, trackEndX, PATH_STEP_PX)
     : '';
 
-  // Bot transforms
-  const botTransform = phase === 'swimming'
-    ? 'translateY(-50%)'
-    : 'translateY(-50%) rotate(-720deg) scale(0.3)';
-  const botOpacity = phase === 'swimming' ? 1 : 0;
-  const botTransition = reduceMotion
-    ? 'none'
-    : `transform ${BOT_DISAPPEAR_MS}ms cubic-bezier(.4,0,.2,1), opacity ${BOT_DISAPPEAR_MS}ms ease-in`;
+  // 💡 [수정] 봇은 더 이상 빙글빙글 돌거나 사라지지 않고 제자리에 유지됩니다.
+  const botTransform = 'translateY(-50%)';
+  const botOpacity = 1;
+  const botTransition = 'none';
 
-  // Fish OUTER transitions — 개별 transform 속성 별 독립 transition.
-  // - rotate: 200ms linear (잔잔한 smoothing)
-  // - scale:  2100ms ease-out (점진 grow, unmount 전 도달)
-  // - translate(중앙정렬용)/left/top: transition 없음 (rAF 가 매 프레임 갱신)
+  // 💡 [수정] 물고기가 닿으면 2.5배 커지면서 동시에 투명도 0으로 펑 터지는 효과
+  const isPopped = phase === 'popped';
+  const fishScale = isPopped ? FISH_SCALE_POP : 1.0;
+  const fishOpacity = isPopped ? 0 : 1;
+  
+  // scale과 opacity에 짧은 시간을 주어 풍선이 터지는 듯한 타격감을 줍니다.
   const fishOuterTransition = reduceMotion
     ? 'none'
-    : `rotate ${ROTATE_TRANSITION_MS}ms linear, scale ${SCALE_TRANSITION_MS}ms ease-out`;
+    : `rotate ${ROTATE_TRANSITION_MS}ms linear, scale ${POP_DURATION_MS}ms cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity ${POP_DURATION_MS}ms ease-out`;
 
   return (
     <div
@@ -210,9 +176,9 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
       aria-valuemax={totalMs}
       aria-valuenow={Math.max(0, effectiveRemainingMs)}
     >
-      {/* Bot — 왼쪽 끝 고정, eating 시 회전+축소+페이드 */}
+      {/* Bot — 가만히 고정 */}
       <div
-        className="absolute left-0 w-9 h-9 rounded-xl bg-gradient-to-br from-[#4a8bff] to-[#7aa9ff] flex items-center justify-center shadow-sm"
+        className="absolute left-0 w-9 h-9 rounded-xl bg-gradient-to-br from-[#4a8bff] to-[#7aa9ff] flex items-center justify-center shadow-sm z-10"
         style={{
           top: '50%',
           transform: botTransform,
@@ -242,13 +208,12 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
         </svg>
       </div>
 
-      {/* SVG 곡선 트랙 — BOT 에서 fish 입까지 line segments 로 정확한 sine wave */}
+      {/* SVG 곡선 트랙 */}
       <svg
         className="absolute inset-0 w-full h-full overflow-visible pointer-events-none"
         aria-hidden
       >
         <defs>
-          {/* userSpaceOnUse 로 path 가 짧아져도 색상 위치 일관 */}
           <linearGradient
             id={`trk-${uid}`}
             gradientUnits="userSpaceOnUse"
@@ -272,9 +237,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
         )}
       </svg>
 
-      {/* 물고기 — 2-level
-          OUTER: 개별 transform 속성 (translate/rotate/scale) + 독립 transition
-          INNER: chomp keyframe class (CSS animation, .fish-chomp) */}
+      {/* 물고기 — 터지는 애니메이션 */}
       {containerWidth > 0 && (
         <div
           style={{
@@ -283,19 +246,16 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
             top: `${fishTop}px`,
             width: FISH_SIZE_PX,
             height: FISH_SIZE_PX,
-            // 개별 transform 속성 — 각각 별도 transition 가능 (CSS Transforms Level 2)
             translate: '-50% -50%',
             rotate: `${angleDeg}deg`,
             scale: String(fishScale),
+            opacity: fishOpacity, // 💡 터지면서 투명해짐
             transformOrigin: 'center',
             transition: fishOuterTransition,
             pointerEvents: 'none',
           }}
         >
           <div
-            className={
-              phase === 'eating' && !reduceMotion ? 'fish-chomp' : ''
-            }
             style={{
               width: '100%',
               height: '100%',
@@ -303,7 +263,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
             }}
           >
             <img
-              src={`${import.meta.env.BASE_URL}timer-fish.png`}
+              src={`${import.meta.env.BASE_URL}timer-fish.png`} // 물고기 이미지 경로 확인 필요
               alt=""
               aria-hidden
               width={FISH_SIZE_PX}
