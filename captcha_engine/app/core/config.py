@@ -106,6 +106,14 @@ class Settings(BaseSettings):
         """CORSMiddleware 의 allow_origins 에 직접 넘길 수 있는 list."""
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    # -----------------------------------------------------------------------
+    # 관리 콘솔 (origin 면제)
+    # -----------------------------------------------------------------------
+    # 관리 콘솔(agami-captcha.cloud) 내부의 "프로젝트 API 테스트" 호출은 회원이 등록한
+    # 도메인과 무관하게 origin 검사를 면제한다. 정확히 이 origin 하나(루트, https)만.
+    # 환경이 다르면 env CONSOLE_SELF_ORIGIN 으로 override.
+    console_self_origin: str = Field(default="https://agami-captcha.cloud")
+
 
 @lru_cache
 def get_settings() -> Settings:

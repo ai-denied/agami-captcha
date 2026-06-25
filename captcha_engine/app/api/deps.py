@@ -92,6 +92,15 @@ def _origin_matches(allowed: str, incoming: str) -> bool:
     return i_host == a_host or i_host.endswith("." + a_host)
 
 
+def _is_console_self_origin(origin: str, self_origin: str) -> bool:
+    """관리 콘솔 자체 도메인 면제 판정 (순수 함수).
+
+    정확 문자열 일치 하나만. 와일드카드/서브도메인 면제 아님 (https 루트 도메인).
+    self_origin 미설정(빈 값)이면 면제 없음 — 오설정 fail-safe.
+    """
+    return bool(self_origin) and origin == self_origin
+
+
 async def verify_origin(
     request: Request,
     api_key: ApiKey = Depends(verify_client_key),
@@ -101,9 +110,14 @@ async def verify_origin(
     Origin 헤더가 해당 api_key(프로젝트)의 allowed_origins 화이트리스트에 있는지 확인.
     Origin 이 없는 요청 (서버-서버, curl 테스트 등) 은 통과.
     정확일치 + 서브도메인 자동 포함 (_origin_matches 참고).
+    관리 콘솔(agami-captcha.cloud) 자체 도메인은 등록과 무관하게 면제 (_is_console_self_origin).
     """
     origin = request.headers.get("origin")
     if not origin:
+        return api_key
+
+    # 관리 콘솔 자체 도메인 면제: 콘솔 내부 API 테스트는 회원 등록 도메인과 무관하게 통과.
+    if _is_console_self_origin(origin, get_settings().console_self_origin):
         return api_key
 
     # 수정됨: tenant_id가 아닌 api_key_id를 기준으로 프로젝트 도메인 목록을 가져와 매칭
