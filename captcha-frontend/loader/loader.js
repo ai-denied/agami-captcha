@@ -127,6 +127,14 @@ function resolveCb(cb) {
   return null;
 }
 
+// auto: 로드 시점 prefers-color-scheme 1회 해석(실시간 OS 전환 반영은 다음 사이클). matchMedia 가드 필수.
+function resolveAuto() {
+  return (typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    ? 'dark' : 'light';
+}
+
 function buildSrc(kind, sitekey, wid) {
   var parts = [];
   parts.push('kind=' + encodeURIComponent(kind || 'flashlight'));
@@ -275,8 +283,10 @@ function renderInto(div, opts) {
   var kind = opts.kind || 'flashlight';
   var sitekey = opts.sitekey || '';
   if (!sitekey) warn('sitekey(data-sitekey) 가 없습니다. 백엔드 기본 키로 폴백될 수 있습니다.');
-  // 테마(비주얼 전용): 'light' | 'dark'. 기본/그 외 값 → 'light' 폴백.
-  var theme = (opts.theme === 'dark') ? 'dark' : 'light';
+  // 테마(비주얼 전용): 'auto'(기본) | 'light' | 'dark'. auto=prefers-color-scheme 추종, 무효값→auto.
+  var pref = String(opts.theme == null ? 'auto' : opts.theme).toLowerCase().trim();
+  if (pref !== 'light' && pref !== 'dark') pref = 'auto';
+  var theme = (pref === 'auto') ? resolveAuto() : pref;
 
   var w = {
     id: id,
@@ -481,7 +491,9 @@ var api = {
       if (!div) { warn('render: 대상을 찾지 못했습니다: ' + el); return; }
       var existing = div.getAttribute('data-agami-rendered');
       if (existing) { warn('render: 이미 렌더된 엘리먼트입니다.'); return existing; }
-      return renderInto(div, opts || {});
+      var o = opts || {};
+      if (o.theme == null) o.theme = div.getAttribute('data-theme');
+      return renderInto(div, o);
     } catch (e) {
       warn('render 예외: ' + e); // throw 로 페이지를 죽이지 않는다.
     }
