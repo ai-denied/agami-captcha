@@ -81,8 +81,18 @@ class Settings(BaseSettings):
     # 봇 위험도 추론을 컨테이너 내부 ONNX 대신 같은 클러스터의 HTTP 서비스로 위임.
     # K8s 에서는 captcha-config ConfigMap 의 INFERENCE_API_URL 로 주입(case-insensitive).
     inference_api_url: str = Field(default="http://flashlight-inference-api-svc")
-    # 추론 API 호출 타임아웃(초). 초과 시 fail-closed(block).
+    # 추론 API 호출 타임아웃(초). 초과 시 fail-closed(block). face-liveness 도 공유.
     inference_timeout_sec: float = Field(default=5.0)
+
+    # -----------------------------------------------------------------------
+    # 안면 라이브니스 추론 마이크로서비스 (face-liveness-api-svc)
+    # -----------------------------------------------------------------------
+    # 관찰 단계 — A2 hit 이 verdict 를 결정한다. 본 API 의 spoof_score 는 로그에만
+    # 기록되며 검증 결과에 영향을 주지 않는다(분포 검증 후 정책 반영 예정).
+    # timeout 은 flashlight 와 공용(inference_timeout_sec).
+    face_liveness_api_url: str = Field(
+        default="http://face-liveness-api-svc.agami.svc.cluster.local"
+    )
 
     # -----------------------------------------------------------------------
     # CORS

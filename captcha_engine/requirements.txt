@@ -13,5 +13,6 @@ python-multipart>=0.0.9
 asyncpg
 psycopg2-binary
 # 손전등 봇 위험도 추론을 같은 클러스터의 추론 마이크로서비스 HTTP 호출로 위임.
-# (기존 컨테이너 내부 ONNX 추론 제거 → numpy/onnxruntime 더 이상 불필요)
+# (ONNX 추론은 제거됐으나 face 피처 추출에 numpy 필요)
 httpx>=0.27
+numpy>=1.26

@@ -45,7 +45,11 @@ from app.captcha.verifier import (
     check_context_hit,
     check_flashlight_hit,
 )
-from app.captcha.face_evidence import check_face_evidence
+from app.captcha.face_evidence import FaceEvidence, check_face_evidence
+from app.captcha.face_inference_client import (
+    build_x_seq_from_evidence,
+    predict_face_spoof,
+)
 from app.core.config import get_settings
 from app.core.security import (
     hash_secret,
@@ -195,6 +199,46 @@ async def submit_answer(
         # A2: 위젯이 보낸 원시 랜드마크 증거(face_behavioral_data.face_evidence)를 서버가
         # 위젯 식(EAR/yaw/smile/nod)으로 재검증. 라벨 echo(check_face_hit) 대체 — echo 우회 차단.
         hit = check_face_evidence(answer, body.face_behavioral_data)
+
+        # --- 관찰 단계: face-liveness /predict 호출 (verdict 미반영) ---------------
+        # A2 hit 이 verdict 를 결정한다. 본 호출의 spoof_score 는 logger.info 에만
+        # 기록되며 응답 흐름/검증 결과에 영향을 주지 않는다. 추출/예측 실패는
+        # logger.warning 으로만 남기고 모두 흡수한다(분포 검증 전 단계, fail-closed 아님).
+        try:
+            if body.face_behavioral_data is not None:
+                ev = FaceEvidence.model_validate(body.face_behavioral_data)
+                for inst in ev.face_evidence.instructions:
+                    built = build_x_seq_from_evidence(
+                        inst.frames, ev.frame_w, ev.frame_h
+                    )
+                    if built is None:
+                        logger.info(
+                            "face_liveness_observe skipped (no x_seq) "
+                            "challenge_id=%s instruction=%s frames=%d",
+                            challenge_id, inst.type, len(inst.frames),
+                        )
+                        continue
+                    x_seq, seq_length, info = built
+                    pred = await predict_face_spoof(x_seq, seq_length)
+                    logger.info(
+                        "face_liveness_observe challenge_id=%s instruction=%s "
+                        "spoof_score=%s risk_band=%s is_spoof=%s seq_length=%d "
+                        "face_detect_rate=%.3f used_real_timestamps=%s",
+                        challenge_id,
+                        inst.type,
+                        None if pred is None else pred.get("spoof_score"),
+                        None if pred is None else pred.get("risk_band"),
+                        None if pred is None else pred.get("is_spoof"),
+                        seq_length,
+                        float(info.get("face_detect_rate", 0.0)),
+                        bool(info.get("used_real_timestamps", False)),
+                    )
+        except Exception:
+            logger.warning(
+                "face_liveness_observe failed (verdict unaffected) challenge_id=%s",
+                challenge_id, exc_info=True,
+            )
+        # --- 관찰 단계 끝 ----------------------------------------------------------
     elif answer.kind == ChallengeKind.CONTEXT_INFERENCE:
         if body.submitted_answers is None:
             raise HTTPException(
