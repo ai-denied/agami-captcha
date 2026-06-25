@@ -228,6 +228,35 @@ class FaceInstruction(BaseModel):
     duration_sec: int = Field(..., gt=0, le=10)
 
 
+# ---------------------------------------------------------------------------
+# 안면 미션 내 손동작(hand) 지시 — A3 (b안: face_instructions 와 분리·병렬)
+# ---------------------------------------------------------------------------
+
+class HandInstructionType(str, Enum):
+    """
+    안면 미션 1회에 사용자가 손으로 수행할 동작 카테고리. MediaPipe Hands(21점)
+    랜드마크로 검증한다. (향후 PINKY_ONLY 등 손가락별 확장 자리)
+    """
+    OPEN_HAND = "open_hand"
+    FIST = "fist"
+    PINCH = "pinch"
+
+
+# 사용자에게 보일 한국어 라벨 (FACE_INSTRUCTION_LABELS 와 동형).
+HAND_INSTRUCTION_LABELS: dict[HandInstructionType, str] = {
+    HandInstructionType.OPEN_HAND: "손 펴기",
+    HandInstructionType.FIST: "주먹 쥐기",
+    HandInstructionType.PINCH: "엄지-검지 붙이기",
+}
+
+
+class HandInstruction(BaseModel):
+    """한 회차의 단일 손동작 지시. FaceInstruction 과 동형."""
+    type: HandInstructionType
+    label: str
+    duration_sec: int = Field(..., gt=0, le=10)
+
+
 class FaceChallengeSpec(ChallengeSpecBase):
     """안면 미션 캡챠 1회 인스턴스의 클라이언트 측 사양."""
     kind: Literal[ChallengeKind.FACE_MISSION] = ChallengeKind.FACE_MISSION
@@ -235,6 +264,8 @@ class FaceChallengeSpec(ChallengeSpecBase):
     instructions: list[FaceInstruction] = Field(
         ..., description="사용자가 순서대로 수행해야 할 지시 목록. 보통 1~3개."
     )
+    # A3: 손동작 지시(병렬). 기본 빈 리스트 — hand 없는 챌린지도 정상(하위호환).
+    hand_instructions: list[HandInstruction] = Field(default_factory=list)
     time_limit_sec: Annotated[int, Field(gt=0, le=120)]
     hint_after_sec: int | None = Field(
         None, description="N초 경과 시 힌트 표시. None 이면 힌트 없음."
@@ -251,6 +282,8 @@ class FaceChallengeAnswer(BaseModel):
     expected_instruction_types: list[str] = Field(
         ..., description="generator 가 만든 지시 타입의 순서. 제출 시 일치 여부로 1차 판정."
     )
+    # A3: 손동작 정답 시퀀스(병렬). 기본 빈 리스트 — hand 없는 챌린지 하위호환.
+    expected_hand_instruction_types: list[HandInstructionType] = Field(default_factory=list)
     tolerance_sec: float = Field(
         default=1.0, gt=0.0, le=10.0,
         description="각 지시 수행 시간 허용 오차 (MediaPipe 합류 후 실제 사용)."

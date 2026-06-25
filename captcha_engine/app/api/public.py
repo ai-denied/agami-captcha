@@ -46,6 +46,7 @@ from app.captcha.verifier import (
     check_flashlight_hit,
 )
 from app.captcha.face_evidence import FaceEvidence, check_face_evidence
+from app.captcha.hand_evidence import check_hand_evidence
 from app.captcha.face_inference_client import (
     build_x_seq_from_evidence,
     predict_face_spoof,
@@ -199,6 +200,12 @@ async def submit_answer(
         # A2: 위젯이 보낸 원시 랜드마크 증거(face_behavioral_data.face_evidence)를 서버가
         # 위젯 식(EAR/yaw/smile/nod)으로 재검증. 라벨 echo(check_face_hit) 대체 — echo 우회 차단.
         hit = check_face_evidence(answer, body.face_behavioral_data)
+
+        # A3: 같은 face_mission 챌린지의 손동작 증거(hand_evidence)를 병렬 검증해 AND 결합.
+        # hand 미요구 챌린지(expected_hand_instruction_types 비어있음)는 check_hand_evidence
+        # 가 True 를 반환하므로 기존 face-only 동작은 불변.
+        hand_hit = check_hand_evidence(answer, body.face_behavioral_data)
+        hit = hit and hand_hit
 
         # --- 관찰 단계: face-liveness /predict 호출 (verdict 미반영) ---------------
         # A2 hit 이 verdict 를 결정한다. 본 호출의 spoof_score 는 logger.info 에만
