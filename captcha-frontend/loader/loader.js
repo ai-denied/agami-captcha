@@ -96,16 +96,12 @@ function buildSrc(kind, sitekey, wid, theme) {
 function makeSpinner(theme) {
   var dark = theme === 'dark';
   var s = document.createElement('div');
-  s.setAttribute('data-agami-loading', '1');
-  s.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;' + (dark ? 'background:#23262e;color:#fff;' : 'background:#fff;border:1.5px solid #e3e6ec;color:#2c313b;');
-  
+  s.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;margin-bottom:8px;' + (dark ? 'background:#23262e;color:#fff;' : 'background:#fff;border:1.5px solid #e3e6ec;color:#2c313b;');
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
-  var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
-  
   s.innerHTML = 
     '<style>@keyframes agami-spin { 100% { transform: rotate(360deg); } }</style>' +
-    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';">' +
-      '<img src="' + fishSrc + '" style="width:22px;height:22px;animation:agami-spin 1s linear infinite;" alt="loading" />' +
+    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)') + ';">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;animation:agami-spin 1s linear infinite;" />' +
     '</span>' +
     '<span style="font:700 16px system-ui,-apple-system,sans-serif;">검증 중입니다...</span>';
   return s;
@@ -183,14 +179,15 @@ function setStatus(w, msg) {
 function makeVerified(theme) {
   var dark = theme === 'dark';
   var v = document.createElement('div');
-  
-  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:8px 18px;border-radius:12px;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;margin-bottom:8px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
   var green = dark ? '#34d399' : '#16a34a';
+  var fishSrc = EMBED_BASE.replace('/embed', '/pass.png');
   v.innerHTML =
+    '<span style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
-      '<img src="/pass.png" style="width:22px;height:22px;filter:hue-rotate(90deg);" alt="success" />' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;" />' +
     '</span>' +
-    '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
+    '<span style="font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
 }
 
@@ -210,22 +207,24 @@ function removeVerified(w) {
 function makeFailed(w, errMsg) {
   var dark = w.theme === 'dark';
   var v = document.createElement('div');
-  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:8px 18px;border-radius:12px;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
-  
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:8px 18px;border-radius:12px;margin-bottom:8px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
   var red = dark ? '#fb7185' : '#e11d48';
+  var fishSrc = EMBED_BASE.replace('/embed', '/fail.png');
   v.innerHTML =
+    '<span style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
-      '<img src="/fail.png" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;" />' +
     '</span>' +
     '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;">' +
       '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
       '<span style="font:12px system-ui,-apple-system,sans-serif;color:' + (dark ? '#a1a1aa' : '#64748b') + ';">' + errMsg + '</span>' +
     '</div>' +
-    '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;flex:none;">다시 시도</button>';
+    '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;padding:8px 14px;border-radius:8px;font:700 13px sans-serif;flex:none;">다시 시도</button>';
     
   v.querySelector('.agami-retry-btn').onclick = function(e) { e.stopPropagation(); api.reset(w.id); if (w.triggerBtn) w.triggerBtn.click(); };
   return v;
 }
+
 function showFailed(w, errMsg) {
   if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; }
   w.failedEl = function makeFailed(w, errMsg) {
