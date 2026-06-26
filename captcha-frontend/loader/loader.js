@@ -314,25 +314,22 @@ function renderInto(div, opts) {
 }
 
 // [핵심 조치 1] 모달 박스를 완전 제거하고 iframe을 네이티브 모달처럼 사용하여 여백 불일치(블랙 갭) 완벽 해결
-// loader.js 내 mountIframe 함수를 아래 내용으로 교체하세요.
 function mountIframe(w) {
   var overlay = document.createElement('div');
   overlay.id = w.id + '-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);';
-  overlay.onclick = function (e) { if (e.target === overlay) api.reset(w.id); };
-
+  
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
-  // [수정] overflow: hidden 추가하여 스크롤바 원천 봉쇄
-  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;overflow:hidden;';
+  
+  // [핵심] scrolling="no" 속성 추가 및 스타일 강화
+  iframe.setAttribute('scrolling', 'no');
+  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:none;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);background:transparent;overflow:hidden;';
+  
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
   
-  // 로딩 스피너
-  var spinner = makeSpinner(w.theme);
-  spinner.style.position = 'absolute'; // 오버레이 중앙에 오게 함
-  
-  overlay.appendChild(spinner);
+  overlay.appendChild(makeSpinner(w.theme));
   overlay.appendChild(iframe);
   document.body.appendChild(overlay);
 
