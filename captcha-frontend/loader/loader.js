@@ -135,13 +135,14 @@ function resolveAuto() {
     ? 'dark' : 'light';
 }
 
-function buildSrc(kind, sitekey, wid) {
+// buildSrc 함수 수정
+function buildSrc(kind, sitekey, wid, theme) { // theme 파라미터 추가
   var parts = [];
   parts.push('kind=' + encodeURIComponent(kind || 'flashlight'));
   if (sitekey) parts.push('client_key=' + encodeURIComponent(sitekey));
   parts.push('wid=' + encodeURIComponent(wid));
   parts.push('host=' + encodeURIComponent(location.origin));
-  // difficulty 는 절대 넣지 않는다 (백엔드에서 제거됨 — Stage 0 완료).
+  parts.push('theme=' + encodeURIComponent(theme || 'light')); 
   return EMBED_BASE + '?' + parts.join('&');
 }
 
@@ -266,9 +267,12 @@ function removeVerified(w) {
 // iframe 제거(+스피너/타이머 정리). idle 복귀 시 사용.
 function removeIframe(w) {
   if (w.iframe) {
-    clearSpinner(w); // readyTimer 해제 + 로딩 표시 제거
-    removeEl(w.iframe);
+    clearSpinner(w);
+    if (w.overlay && w.overlay.parentNode) {
+      w.overlay.parentNode.removeChild(w.overlay);
+    }
     w.iframe = null;
+    w.overlay = null;
   }
 }
 
@@ -326,33 +330,33 @@ function renderInto(div, opts) {
 
 // iframe(=EmbedEntry/챌린지) 생성·삽입. 트리거 클릭 또는 명시 호출 시점에만 실행.
 function mountIframe(w) {
+  var overlay = document.createElement('div');
+  overlay.id = w.id + '-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
+
+  var modalBox = document.createElement('div');
+  modalBox.style.cssText = 'width:100%;max-width:400px;background:' + (w.theme === 'dark' ? '#1a1a1b' : '#fff') + ';border-radius:12px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.2);';
+
   var iframe = document.createElement('iframe');
-  iframe.src = buildSrc(w.kind, w.sitekey, w.id);
+  iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
   iframe.title = 'Agami CAPTCHA';
   iframe.setAttribute('frameborder', '0');
   iframe.setAttribute('scrolling', 'no');
-  iframe.style.cssText = 'width:100%;height:90px;border:0;display:block;';
-  // 최소 권한 sandbox:
-  //   allow-scripts      : 위젯(React)이 동작하려면 필수.
-  //   allow-same-origin  : 위젯이 자기 origin(agami) 으로 백엔드 API 를 호출하고,
-  //                        face_mission 카메라(getUserMedia)가 동작하며,
-  //                        postMessage 의 event.origin 이 실제 서비스 origin 으로
-  //                        오게 하려면 필수. (없으면 opaque/null origin → 검증 불가)
-  //   top-navigation/popups/forms 등은 부여하지 않음(불필요·보안).
-  //   ※ iframe 은 회원 페이지와 cross-origin 이므로 allow-same-origin 이 있어도
-  //     회원 페이지에 접근하거나 sandbox 를 스스로 해제할 수 없다.
+  iframe.style.cssText = 'width:100%;height:90px;border:0;display:block; transition: height 0.2s ease;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-  // 카메라 권한 위임(Permissions Policy). face_mission 의 MediaPipe getUserMedia 용.
-  //   - sandbox 가 아니라 allow 속성이 카메라를 관장한다.
-  //   - "camera" 는 iframe src origin(agami) 에 위임. 운영은 HTTPS 필수(보안 컨텍스트).
   iframe.setAttribute('allow', 'camera');
 
   var spinner = makeSpinner();
-  w.div.appendChild(spinner);
-  w.div.appendChild(iframe);
-  w.iframe = iframe;
+  modalBox.appendChild(spinner);
+  modalBox.appendChild(iframe);
+  overlay.appendChild(modalBox);
 
-  // ready 미수신 대비: iframe onload 또는 8초 타임아웃 후 로딩 표시 제거.
+  // 현재 요소가 아닌 body 최상단에 부착
+  document.body.appendChild(overlay);
+
+  w.iframe = iframe;
+  w.overlay = overlay; // 삭제를 위해 참조 저장
+
   iframe.onload = function () { clearSpinner(w); };
   w.readyTimer = setTimeout(function () { clearSpinner(w); }, 8000);
 
