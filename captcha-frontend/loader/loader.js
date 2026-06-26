@@ -478,4 +478,29 @@ var api = {
       var w = widgets[widgetId];
       if (!w) { warn('reset: 알 수 없는 widgetId: ' + widgetId); return; }
       w.token = '';
-      setHidden(
+      setHidden(w, '');
+      removeIframe(w); 
+      removeVerified(w);
+      if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; } 
+      
+      if (w.triggerBtn) {
+        w.triggerBtn.style.display = 'flex'; 
+        var sp = w.triggerBtn.querySelector('.agami-spinner');
+        if (sp) sp.style.display = 'none';
+        w.triggerBtn.style.border = '1.5px solid ' + (w.theme === 'dark' ? '#333' : '#e3e6ec');
+      }
+      
+      w.phase = 'idle';
+      setStatus(w, '초기화되었습니다');
+    } catch (e) {
+      warn('reset 예외: ' + e);
+    }
+  },
+
+  getResponse: function (widgetId) {
+    var w = widgets[widgetId];
+    return (w && w.token) || '';
+  },
+};
+
+export default api;
