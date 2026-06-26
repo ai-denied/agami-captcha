@@ -100,13 +100,11 @@ function makeSpinner() {
   s.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);display:flex;align-items:center;justify-content:center;z-index:9999;';
   
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
-  var fishImg = '<img src="' + fishSrc + '" style="width:30px;height:30px;position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);object-fit:contain;" alt="로딩물고기" onerror="this.outerHTML=\'🐟\'" />';
   
   s.innerHTML = 
-    '<div style="position:relative;width:64px;height:64px;">' +
-      '<style>@keyframes agami-spin { 100% { transform: rotate(360deg); } }</style>' +
-      '<div style="position:absolute;inset:0;border:3px solid rgba(91,139,247,0.2);border-top-color:#5B8BF7;border-radius:50%;animation:agami-spin 1s linear infinite;"></div>' +
-      fishImg +
+    '<style>@keyframes agami-fish-spin { 100% { transform: rotate(360deg); } }</style>' +
+    '<div style="width:56px;height:56px;border:3px solid rgba(91,139,247,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;">' +
+      '<img src="' + fishSrc + '" style="width:38px;height:38px;animation:agami-fish-spin 1.5s linear infinite;" alt="loading" />' +
     '</div>';
   return s;
 }
@@ -190,7 +188,7 @@ function makeVerified(theme) {
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
     '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
-      '<img src="' + fishSrc + '" style="width:22px;height:22px;" alt="success" />' +
+      '<img src="' + fishSrc + '" style="width:38px;height:38px;filter:hue-rotate(90deg);" alt="success" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
@@ -214,36 +212,23 @@ function makeFailed(w, errMsg) {
   var dark = w.theme === 'dark';
   var v = document.createElement('div');
   v.setAttribute('class', 'agami-failed');
-  v.style.cssText =
-    'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
-    'min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' +
-    (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
   
   var red = dark ? '#fb7185' : '#e11d48';
-  var iconBg = dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)';
-  var titleColor = dark ? '#fff' : '#2c313b';
-  var descColor = dark ? '#a1a1aa' : '#64748b';
-
+  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
-    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';">' +
-      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="' + red + '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
+      '<img src="' + fishSrc + '" style="width:38px;height:38px;filter:hue-rotate(280deg);" alt="fail" />' +
     '</span>' +
     '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
-      '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + titleColor + ';">검증 실패</span>' +
-      '<span style="font:12px system-ui,-apple-system,sans-serif;color:' + descColor + ';">' + errMsg + '</span>' +
+      '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
+      '<span style="font:12px system-ui,-apple-system,sans-serif;color:' + (dark ? '#a1a1aa' : '#64748b') + ';">' + errMsg + '</span>' +
     '</div>' +
     '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;transition:opacity 0.2s;white-space:nowrap;flex:none;">다시 시도</button>';
     
   var retryBtn = v.querySelector('.agami-retry-btn');
-  retryBtn.onmouseenter = function() { retryBtn.style.opacity = '0.8'; };
-  retryBtn.onmouseleave = function() { retryBtn.style.opacity = '1'; };
-  retryBtn.onclick = function(e) {
-    e.stopPropagation();
-    api.reset(w.id); 
-    if (w.triggerBtn) w.triggerBtn.click(); // 즉시 다시 열기
-  };
-
+  retryBtn.onclick = function(e) { e.stopPropagation(); api.reset(w.id); if (w.triggerBtn) w.triggerBtn.click(); };
   return v;
 }
 
@@ -343,22 +328,17 @@ function mountIframe(w) {
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
+  // [중요] border:0 설정 유지 및 box-shadow를 통해 시각적 구분만 함
   iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
-
-  var spinner = makeSpinner();
-  spinner.style.position = 'absolute';
-  spinner.style.color = '#fff'; // 다크모드 배경 위에서 보일 수 있게 스피너 색상 조정
-
-  overlay.appendChild(spinner);
+  
+  overlay.appendChild(makeSpinner());
   overlay.appendChild(iframe);
   document.body.appendChild(overlay);
 
   w.iframe = iframe;
   w.overlay = overlay; 
-  iframe.onload = function () { clearSpinner(w); };
-  w.readyTimer = setTimeout(function () { clearSpinner(w); }, 8000);
   return iframe;
 }
 
