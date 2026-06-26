@@ -307,12 +307,13 @@ function renderInto(div, opts) {
 }
 
 // [핵심 조치 1] 모달 박스를 완전 제거하고 iframe을 네이티브 모달처럼 사용하여 여백 불일치(블랙 갭) 완벽 해결
+// loader.js 내 mountIframe 함수를 아래 내용으로 교체하세요.
 function mountIframe(w) {
   var overlay = document.createElement('div');
   overlay.id = w.id + '-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
+  // 배경을 어둡게 하고, 내부 iframe을 중앙 정렬합니다.
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
 
-  // 검은 여백을 클릭하면 창 닫기
   overlay.onclick = function (e) {
     if (e.target === overlay) api.reset(w.id);
   };
@@ -322,24 +323,24 @@ function mountIframe(w) {
   iframe.title = 'Agami CAPTCHA';
   iframe.setAttribute('frameborder', '0');
   iframe.setAttribute('scrolling', 'no');
-  // 배경을 투명으로 하고 모서리를 둥글게하여 React 내부 카드와 혼연일체 되도록 구성
-  iframe.style.cssText = 'width:90%;max-width:500px;height:120px;border:0;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.15);display:block;transition:height 0.2s ease;background:transparent;';
+  
+  // [핵심] modalBox 제거: iframe이 곧 모달창입니다. 배경을 투명하게 해서 React가 그리는 색상을 따릅니다.
+  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.2);display:block;background:transparent;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
 
   var spinner = makeSpinner();
   spinner.style.position = 'absolute';
+  spinner.style.color = '#fff'; // 다크모드 배경 위에서 보일 수 있게 스피너 색상 조정
+
   overlay.appendChild(spinner);
   overlay.appendChild(iframe);
-
   document.body.appendChild(overlay);
 
   w.iframe = iframe;
   w.overlay = overlay; 
-
   iframe.onload = function () { clearSpinner(w); };
   w.readyTimer = setTimeout(function () { clearSpinner(w); }, 8000);
-
   return iframe;
 }
 
