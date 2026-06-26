@@ -108,9 +108,9 @@ function removeEl(el) {
   if (el && el.parentNode) el.parentNode.removeChild(el);
 }
 
-// ----------------------------------------------------------------------
-// 1. 트리거 버튼 (클릭 시 테두리 애니메이션 적용)
-// ----------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// [핵심] 트리거 버튼 생성 (클릭 시 파란 테두리 애니메이션 작동)
+// -----------------------------------------------------------------------------
 function makeTrigger(onClick, theme) {
   var dark = theme === 'dark';
   var b = document.createElement('button');
@@ -127,19 +127,17 @@ function makeTrigger(onClick, theme) {
   b.style.cssText =
     'all:unset;cursor:pointer;display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
     'min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' +
-    'transition:transform .15s, box-shadow .2s, border-color .2s;' +
-    (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #e3e6ec;');
+    'transition:transform .15s, box-shadow .2s, border-color .2s;border:1.5px solid ' + (dark ? '#333' : '#e3e6ec') + ';' +
+    'background:' + (dark ? '#23262e' : '#fff') + ';';
   
   var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
   var labelColor = dark ? '#fff' : '#2c313b';
-  
-  // public 폴더 기준 올바른 경로
-  var fishSrc = SERVICE_ORIGIN + '/timer-fish.png';
+  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
 
   b.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:#5B8BF7;"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';position:relative;">' +
-      '<span class="agami-spinner" style="display:none;position:absolute;inset:-3px;border:2.5px solid #5B8BF7;border-right-color:transparent;border-radius:50%;animation:agami-spin 0.8s linear infinite;"></span>' +
+      '<span class="agami-spinner" style="display:none;position:absolute;inset:-3px;border:2px solid #5B8BF7;border-right-color:transparent;border-radius:50%;animation:agami-spin 0.8s linear infinite;"></span>' +
       '<img src="' + fishSrc + '" style="width:20px;height:20px;object-fit:contain;" alt="icon" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + labelColor + ';">사람인지 확인</span>';
@@ -152,7 +150,11 @@ function makeTrigger(onClick, theme) {
     b.style.transform = '';
     if (!dark) { b.style.borderColor = '#e3e6ec'; b.style.boxShadow = ''; }
   };
-  
+  b.onclick = function() {
+    b.style.borderColor = '#5B8BF7';
+    b.querySelector('.agami-spinner').style.display = 'block'; // 스피너 시작
+    onClick();
+  };
   return b;
 }
 
@@ -168,15 +170,15 @@ function setStatus(w, msg) {
   if (w.statusEl) w.statusEl.textContent = msg;
 }
 
-// ----------------------------------------------------------------------
-// 2. 성공 및 실패 UI (정상적인 public 경로 이미지 사용)
-// ----------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// [핵심] 성공 UI (버튼과 동일한 규격 유지, pass.png 경로 올바르게 적용)
+// -----------------------------------------------------------------------------
 function makeVerified(theme) {
   var dark = theme === 'dark';
   var v = document.createElement('div');
   v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
   var green = dark ? '#34d399' : '#16a34a';
-  var passSrc = SERVICE_ORIGIN + '/pass.png';
+  var passSrc = EMBED_BASE.replace('/embed', '/pass.png');
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
@@ -199,14 +201,15 @@ function removeVerified(w) {
   if (w.verifiedEl) { removeEl(w.verifiedEl); w.verifiedEl = null; }
 }
 
+// -----------------------------------------------------------------------------
+// [핵심] 실패 UI (버튼과 동일한 규격 유지, fail.png 경로 올바르게 적용)
+// -----------------------------------------------------------------------------
 function makeFailed(w, errMsg) {
   var dark = w.theme === 'dark';
   var v = document.createElement('div');
-  v.setAttribute('class', 'agami-failed');
   v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
-  
   var red = dark ? '#fb7185' : '#e11d48';
-  var failSrc = SERVICE_ORIGIN + '/fail.png';
+  var failSrc = EMBED_BASE.replace('/embed', '/fail.png');
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
@@ -245,20 +248,18 @@ function removeIframe(w) {
   }
 }
 
-// ----------------------------------------------------------------------
-// 3. 네이티브 모달 방식 (초기엔 투명 상태로 로딩 대기)
-// ----------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// [핵심] 네이티브 모달 (초기 opacity:0 으로 숨겨서 로딩 중 안 보이게 함)
+// -----------------------------------------------------------------------------
 function mountIframe(w) {
   var overlay = document.createElement('div');
   overlay.id = w.id + '-overlay';
-  // 투명도 0으로 시작하여 로딩 화면을 숨김
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px); opacity:0; pointer-events:none; transition:opacity 0.2s ease;';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px); opacity:0; pointer-events:none; transition:opacity 0.2s ease;';
   overlay.onclick = function (e) { if (e.target === overlay) api.reset(w.id); };
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
   iframe.setAttribute('scrolling', 'no');
-  // 스크롤 완벽 차단 및 배경 투명
   iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:none;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);background:transparent;overflow:hidden;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
@@ -281,9 +282,6 @@ function findWidget(data, source) {
   return null;
 }
 
-// ----------------------------------------------------------------------
-// 4. iframe 메시지 수신부
-// ----------------------------------------------------------------------
 function onMessage(event) {
   if (!SERVICE_ORIGIN || event.origin !== SERVICE_ORIGIN) return;
   var data = event.data;
@@ -294,7 +292,7 @@ function onMessage(event) {
 
   switch (data.type) {
     case 'agami-ready': 
-      // React 로딩이 끝나면 오버레이를 표시하고, 트리거 버튼의 스피너를 끔
+      // [핵심] 챌린지 준비 완료 시 오버레이를 서서히 보여주고, 버튼 애니메이션 중지
       if (w.overlay) {
         w.overlay.style.opacity = '1';
         w.overlay.style.pointerEvents = 'auto';
@@ -302,12 +300,13 @@ function onMessage(event) {
       if (w.triggerBtn) {
         var spinner = w.triggerBtn.querySelector('.agami-spinner');
         if (spinner) spinner.style.display = 'none';
+        w.triggerBtn.style.border = '1.5px solid ' + (w.theme === 'dark' ? '#333' : '#e3e6ec');
       }
       break;
 
     case 'agami-result':
       removeIframe(w);
-      if (w.triggerBtn) w.triggerBtn.style.display = 'none'; // 원본 버튼 숨기기
+      if (w.triggerBtn) w.triggerBtn.style.display = 'none';
       
       if (data.success) {
         w.token = data.captchaToken || '';
@@ -386,8 +385,6 @@ function renderInto(div, opts) {
 
   w.triggerBtn = makeTrigger(function () {
     if (w.phase !== 'idle') return; 
-    // 클릭 시 버튼 안에 스피너 작동
-    w.triggerBtn.querySelector('.agami-spinner').style.display = 'block';
     mountIframe(w);
     w.phase = 'expanded';
     setStatus(w, '확인을 시작합니다');
@@ -445,11 +442,11 @@ if (typeof window !== 'undefined') {
         var w = widgets[id];
         if (w.overlay) {
           removeIframe(w); 
-          if (w.triggerBtn) {
-              w.triggerBtn.style.display = 'none'; 
-          }
+          if (w.triggerBtn) w.triggerBtn.style.display = 'none'; 
+          
           var errMsg = '비정상적인 움직임이 감지되었습니다.';
           showFailed(w, errMsg); 
+          
           w.phase = 'failed';
           setStatus(w, '확인에 실패했습니다: ' + errMsg);
           warn(errMsg);
@@ -481,28 +478,4 @@ var api = {
       var w = widgets[widgetId];
       if (!w) { warn('reset: 알 수 없는 widgetId: ' + widgetId); return; }
       w.token = '';
-      setHidden(w, '');
-      removeIframe(w); 
-      removeVerified(w);
-      if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; } 
-      
-      if (w.triggerBtn) {
-        w.triggerBtn.style.display = 'flex'; 
-        var sp = w.triggerBtn.querySelector('.agami-spinner');
-        if (sp) sp.style.display = 'none';
-      }
-      
-      w.phase = 'idle';
-      setStatus(w, '초기화되었습니다');
-    } catch (e) {
-      warn('reset 예외: ' + e);
-    }
-  },
-
-  getResponse: function (widgetId) {
-    var w = widgets[widgetId];
-    return (w && w.token) || '';
-  },
-};
-
-export default api;
+      setHidden(
