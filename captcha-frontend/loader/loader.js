@@ -318,18 +318,20 @@ function renderInto(div, opts) {
 function mountIframe(w) {
   var overlay = document.createElement('div');
   overlay.id = w.id + '-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);';
   overlay.onclick = function (e) { if (e.target === overlay) api.reset(w.id); };
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
-  // [핵심] border:0으로 테두리 제거, 배경 transparent로 여백 이질감 제거
-  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;';
+  // [수정] overflow: hidden 추가하여 스크롤바 원천 봉쇄
+  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;overflow:hidden;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
   
-  // 로딩 스피너도 overlay 중앙에 정렬
+  // 로딩 스피너
   var spinner = makeSpinner(w.theme);
+  spinner.style.position = 'absolute'; // 오버레이 중앙에 오게 함
+  
   overlay.appendChild(spinner);
   overlay.appendChild(iframe);
   document.body.appendChild(overlay);
