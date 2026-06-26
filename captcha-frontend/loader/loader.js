@@ -125,9 +125,19 @@ function makeTrigger(onClick, theme) {
   }
 
   b.style.cssText =
-    'all:unset;cursor:pointer;display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
-    'min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' +
-    'transition:transform .15s, box-shadow .2s;' +
+    'all:unset;' +
+    'cursor:pointer;' +
+    'display:flex;' +
+    'align-items:center;' +
+    'gap:14px;' +
+    'width:100%;' +
+    'box-sizing:border-box;' +
+    'min-height:60px;' +
+    'padding:0 18px 0 16px;' +
+    'border-radius:12px;' +
+    'position:relative;' +
+    'overflow:hidden;' +
+    'border:1px solid #d1d5db;' +   // 항상 회색 테두리
     'background:' + (dark ? '#23262e' : '#fff') + ';';
   
   var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
@@ -142,12 +152,6 @@ function makeTrigger(onClick, theme) {
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + labelColor + ';">사람인지 확인</span>';
 
-  b.onmouseenter = function () {
-    b.style.transform = 'translateY(-1px)';
-  };
-  b.onmouseleave = function () {
-    b.style.transform = '';
-  };
   b.onclick = function() {
     b.querySelector('.agami-spinner').style.display = 'block'; // 스피너 시작
     onClick();
