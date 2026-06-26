@@ -93,19 +93,22 @@ function buildSrc(kind, sitekey, wid, theme) {
   return EMBED_BASE + '?' + parts.join('&');
 }
 
-// [핵심 조치] 텍스트 대신 물고기가 중심에 있고 테두리가 도는 애니메이션 스피너 생성
-function makeSpinner() {
+function makeSpinner(theme) {
+  var dark = theme === 'dark';
   var s = document.createElement('div');
   s.setAttribute('data-agami-loading', '1');
-  s.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  // 버튼과 동일한 CSS 적용
+  s.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #e3e6ec;');
   
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
+  var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
   
   s.innerHTML = 
-    '<style>@keyframes agami-fish-spin { 100% { transform: rotate(360deg); } }</style>' +
-    '<div style="width:56px;height:56px;border:3px solid rgba(91,139,247,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;">' +
-      '<img src="' + fishSrc + '" style="width:38px;height:38px;animation:agami-fish-spin 1.5s linear infinite;" alt="loading" />' +
-    '</div>';
+    '<style>@keyframes agami-spin { 100% { transform: rotate(360deg); } }</style>' +
+    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';position:relative;">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;animation:agami-spin 1.5s linear infinite;" alt="loading" />' +
+    '</span>' +
+    '<span style="font:700 16px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 중입니다...</span>';
   return s;
 }
 
@@ -188,7 +191,7 @@ function makeVerified(theme) {
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
     '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
-      '<img src="' + fishSrc + '" style="width:38px;height:38px;filter:hue-rotate(90deg);" alt="success" />' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;" alt="success" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
@@ -207,19 +210,18 @@ function removeVerified(w) {
   if (w.verifiedEl) { removeEl(w.verifiedEl); w.verifiedEl = null; }
 }
 
-// [핵심 조치 3] 실패 상태 시 표시할 빨간색 알림창 (다시 시도 버튼 포함) UI 생성 함수
 function makeFailed(w, errMsg) {
   var dark = w.theme === 'dark';
   var v = document.createElement('div');
   v.setAttribute('class', 'agami-failed');
-  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
   
   var red = dark ? '#fb7185' : '#e11d48';
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
     '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
-      '<img src="' + fishSrc + '" style="width:38px;height:38px;filter:hue-rotate(280deg);" alt="fail" />' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;" alt="fail" />' +
     '</span>' +
     '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
       '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
@@ -227,8 +229,7 @@ function makeFailed(w, errMsg) {
     '</div>' +
     '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;transition:opacity 0.2s;white-space:nowrap;flex:none;">다시 시도</button>';
     
-  var retryBtn = v.querySelector('.agami-retry-btn');
-  retryBtn.onclick = function(e) { e.stopPropagation(); api.reset(w.id); if (w.triggerBtn) w.triggerBtn.click(); };
+  v.querySelector('.agami-retry-btn').onclick = function(e) { e.stopPropagation(); api.reset(w.id); if (w.triggerBtn) w.triggerBtn.click(); };
   return v;
 }
 
@@ -328,12 +329,15 @@ function mountIframe(w) {
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
-  // [중요] border:0 설정 유지 및 box-shadow를 통해 시각적 구분만 함
+  // 테두리 선(border)을 0으로 하고 둥근 모서리와 그림자만 남김
   iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
   
-  overlay.appendChild(makeSpinner());
+  // 로딩 스피너를 버튼과 똑같은 구조로 삽입
+  var spinner = makeSpinner(w.theme);
+  spinner.style.position = 'static'; // 절대 위치에서 정적 위치로 변경하여 overlay 내부 중앙 정렬 활용
+  
   overlay.appendChild(iframe);
   document.body.appendChild(overlay);
 
