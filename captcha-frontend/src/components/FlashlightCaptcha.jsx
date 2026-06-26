@@ -109,6 +109,27 @@ export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, e
     tracker.sample(e, rect);
   };
 
+  const handleTouchMove = (e) => {
+  if (e.touches.length > 0) {
+    const touch = e.touches[0];
+    const rect = wrapRef.current.getBoundingClientRect();
+    const x = (touch.clientX - rect.left) / rect.width;
+    const y = (touch.clientY - rect.top) / rect.height;
+    
+    // 범위를 0~1로 제한 (손전등이 화면 밖으로 나가지 않게 함)
+    mouseRef.current = { 
+      x: Math.max(0, Math.min(1, x)), 
+      y: Math.max(0, Math.min(1, y)) 
+    };
+    
+    // 마우스 트래커에 좌표 전달
+    tracker.sample(touch, rect); 
+    
+    // 모바일에서 손전등 움직일 때 화면 스크롤 되는 것 방지
+    e.preventDefault();
+  }
+};
+
   const handleClick = (e) => {
     const rect = wrapRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
@@ -210,9 +231,11 @@ export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, e
         <div
           ref={wrapRef}
           onMouseMove={handleMouseMove}
+          onTouchMove={handleTouchMove}     // 추가
+          onTouchStart={handleTouchMove}    // 추가 (터치 시작 시 즉시 위치 반영)
           onClick={handleClick}
           className="relative w-full max-w-[80vh] aspect-[4/3] max-h-[60vh] mx-auto bg-[#0a0a14] rounded-lg overflow-hidden border-2 border-[#1a1a28]"
-          style={{ cursor: 'none' }}
+          style={{ cursor: 'none', touchAction: 'none' }} // touchAction: 'none' 중요!
         >
           <img
             key={currentSub.image_url}
