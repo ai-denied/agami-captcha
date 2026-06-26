@@ -183,7 +183,8 @@ function setStatus(w, msg) {
 function makeVerified(theme) {
   var dark = theme === 'dark';
   var v = document.createElement('div');
-  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
+  
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:8px 18px;border-radius:12px;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
   var green = dark ? '#34d399' : '#16a34a';
   v.innerHTML =
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
