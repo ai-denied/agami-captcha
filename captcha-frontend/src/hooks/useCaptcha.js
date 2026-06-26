@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { issueChallenge, submitAnswer } from '../api/captchaApi';
 
-// =============================================================================
-// 캡챠 상태 머신 훅
-// status: idle → loading → active → (success | fail)
-// active 동안 spec.time_limit_sec 카운트다운, 0 이 되면 자동 fail.
-// =============================================================================
-
 export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey } = {}) {
-  const [status, setStatus] = useState('idle'); // idle|loading|active|success|fail
+  const [status, setStatus] = useState('idle'); 
   const [spec, setSpec] = useState(null);
   const [token, setToken] = useState(null);
   const [error, setError] = useState(null);
@@ -18,12 +12,18 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
 
   // --- 통합 실패 핸들러 (연속 5회 실패 시 30분 차단 기능) ---
   const handleFail = useCallback((err) => {
+    // [핵심 조치] 개발자 도구 오픈 등 비정상적 화면 변경은 밴 카운트 대상에서 완전히 제외합니다.
+    if (err.code === 'abnormal_resize') {
+      setError(err);
+      setStatus('fail');
+      return;
+    }
+
     const BAN_MINUTES = 30;
     const now = Date.now();
     const fails = parseInt(localStorage.getItem('agami_fail_count') || '0', 10) + 1;
 
     if (fails >= 5) {
-      // 5회 실패 도달 시 현재 시간 + 30분으로 밴 해제 시간 기록
       localStorage.setItem('agami_ban_until', (now + BAN_MINUTES * 60 * 1000).toString());
       setError({ code: 'banned', message: '연속 5회 실패로 30분간 이용이 차단되었습니다.' });
     } else {
@@ -34,16 +34,15 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
   }, []);
 
   const start = useCallback(async () => {
-    // 시작 전: 밴 타임이 남아있는지 확인
+    // 시작 전 밴 기간이 남아있는지 확인
     const banUntil = localStorage.getItem('agami_ban_until');
     if (banUntil) {
       if (Date.now() < parseInt(banUntil, 10)) {
         const remainMins = Math.ceil((parseInt(banUntil, 10) - Date.now()) / 60000);
         setError({ code: 'banned', message: `차단됨: ${remainMins}분 후 다시 시도해주세요.` });
         setStatus('fail');
-        return;
+        return; // 시작 자체를 차단 (loader.js로 즉각 fail 메시지가 전송됨)
       } else {
-        // 밴 기간이 종료되었다면 카운트 초기화
         localStorage.removeItem('agami_ban_until');
         localStorage.removeItem('agami_fail_count');
       }
@@ -96,7 +95,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
         if (res.data?.decision === 'block') {
           handleFail({ code: 'verification_failed', message: '행동 분석 결과 사람으로 인증되지 않았습니다.' });
         } else {
-          // 정답을 맞추면 밴 카운터 리셋
+          // 정답을 맞추면 밴 카운터 초기화
           localStorage.removeItem('agami_fail_count');
           setToken(res.data.captcha_token);
           setStatus('success');
@@ -108,7 +107,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
     [spec, status, clientKey, handleFail],
   );
 
-  // --- 타이머 ---
+  // --- 타이머 로직 ---
   useEffect(() => {
     if (status !== 'active' || !spec) return;
     const tick = setInterval(() => {
@@ -124,7 +123,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
     return () => clearInterval(tick);
   }, [status, spec, handleFail]);
 
-  // --- 급격한 화면 비율 변경 감지 (개발자 도구 오픈 방어) ---
+  // --- 급격한 화면 비율 변경 감지 (개발자 도구 오픈 방어 로직 완화) ---
   useEffect(() => {
     if (status !== 'active') return;
 
@@ -135,12 +134,19 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
       const nw = window.innerWidth;
       const nh = window.innerHeight;
       
-      // 창의 가로 또는 세로 크기가 20% 이상 급격하게 변화했는지 감지
+      // [핵심 조치] 모바일 환경(800px 이하)에서는 주소창 숨김 및 화면 회전으로 인한 오작동을 피하기 위해 완전 무시
+      if (nw <= 800 || lastWidth <= 800) {
+        lastWidth = nw;
+        lastHeight = nh;
+        return;
+      }
+
       const ratioW = Math.abs(nw - lastWidth) / lastWidth;
       const ratioH = Math.abs(nh - lastHeight) / lastHeight;
 
-      if (ratioW > 0.2 || ratioH > 0.2) {
-        handleFail({ code: 'abnormal_resize', message: '비정상적인 화면 변경(개발자 도구 등)이 감지되어 취소되었습니다.' });
+      // [핵심 조치] 임계치를 30%로 완화하여 데스크톱에서의 억울한 실패 최소화
+      if (ratioW > 0.3 || ratioH > 0.3) {
+        handleFail({ code: 'abnormal_resize', message: '비정상적인 화면 변경(개발자 도구 등)이 감지되었습니다.' });
       }
       lastWidth = nw;
       lastHeight = nh;
