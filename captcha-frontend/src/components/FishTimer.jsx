@@ -182,7 +182,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
         aria-hidden
       >
         <img
-          src={`${import.meta.env.BASE_URL}bot.png`}
+          src="bot.png"
           alt=""
           aria-hidden
           width={FISH_SIZE_PX}
