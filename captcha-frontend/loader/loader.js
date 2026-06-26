@@ -297,7 +297,6 @@ function onMessage(event) {
       if (w.triggerBtn) {
         var spinner = w.triggerBtn.querySelector('.agami-spinner');
         if (spinner) spinner.style.display = 'none';
-        w.triggerBtn.style.border = '1.5px solid ' + (w.theme === 'dark' ? '#333' : '#e3e6ec');
       }
       break;
 
@@ -484,7 +483,6 @@ var api = {
         w.triggerBtn.style.display = 'flex'; 
         var sp = w.triggerBtn.querySelector('.agami-spinner');
         if (sp) sp.style.display = 'none';
-        w.triggerBtn.style.border = '1.5px solid ' + (w.theme === 'dark' ? '#333' : '#e3e6ec');
       }
       
       w.phase = 'idle';
