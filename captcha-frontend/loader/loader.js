@@ -138,7 +138,7 @@ function makeTrigger(onClick, theme) {
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:#5B8BF7;"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';position:relative;">' +
       '<span class="agami-spinner" style="display:none;position:absolute;inset:-3px;border:2px solid #5B8BF7;border-right-color:transparent;border-radius:50%;animation:agami-spin 0.8s linear infinite;"></span>' +
-      '<img src="' + fishSrc + '" style="width:20px;height:20px;object-fit:contain;" alt="icon" />' +
+      '<img src="' + fishSrc + '" style="width:28px;height:28px;object-fit:contain;" alt="icon" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + labelColor + ';">사람인지 확인</span>';
 
@@ -182,7 +182,7 @@ function makeVerified(theme) {
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
-      '<img src="' + passSrc + '" style="width:20px;height:20px;object-fit:contain;" alt="success" />' +
+      '<img src="' + passSrc + '" style="width:28px;height:28px;object-fit:contain;" alt="success" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
@@ -213,7 +213,7 @@ function makeFailed(w, errMsg) {
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
-      '<img src="' + failSrc + '" style="width:20px;height:20px;object-fit:contain;" alt="fail" />' +
+      '<img src="' + failSrc + '" style="width:28px;height:28px;object-fit:contain;" alt="fail" />' +
     '</span>' +
     '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
       '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
