@@ -127,7 +127,7 @@ function makeTrigger(onClick, theme) {
   b.style.cssText =
     'all:unset;cursor:pointer;display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
     'min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' +
-    'transition:transform .15s, box-shadow .2s, border-color .2s;border:1.5px solid ' + (dark ? '#333' : '#e3e6ec') + ';' +
+    'transition:transform .15s, box-shadow .2s;' +
     'background:' + (dark ? '#23262e' : '#fff') + ';';
   
   var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
@@ -144,14 +144,11 @@ function makeTrigger(onClick, theme) {
 
   b.onmouseenter = function () {
     b.style.transform = 'translateY(-1px)';
-    if (!dark) { b.style.borderColor = '#5B8BF7'; b.style.boxShadow = '0 2px 12px rgba(91,139,247,.14)'; }
   };
   b.onmouseleave = function () {
     b.style.transform = '';
-    if (!dark) { b.style.borderColor = '#e3e6ec'; b.style.boxShadow = ''; }
   };
   b.onclick = function() {
-    b.style.borderColor = '#5B8BF7';
     b.querySelector('.agami-spinner').style.display = 'block'; // 스피너 시작
     onClick();
   };
