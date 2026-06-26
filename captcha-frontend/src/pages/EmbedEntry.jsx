@@ -196,53 +196,52 @@ export default function EmbedEntry() {
         ` : ''}
       `}</style>
 
-        {status === 'active' && spec && (
-          <CaptchaRouter
-            kind={kind}
-            spec={spec}
-            status={status}
-            error={error}
-            onSubmit={submit}
-            onRefresh={start}
-            embedded={isEmbedded}
-          />
-        )}
+      {status === 'active' && spec && (
+        <CaptchaRouter
+          kind={kind}
+          spec={spec}
+          status={status}
+          error={error}
+          onSubmit={submit}
+          onRefresh={start}
+          embedded={isEmbedded}
+        />
+      )}
 
-        {status === 'success' && (
-          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-2xl">✅</div>
-              <div>
-                <div className={`text-lg font-bold ${textColor}`}>검증 성공</div>
-                <div className="text-xs text-[#6b7891]">당신은 사람이군요?</div>
+      {status === 'success' && (
+        <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-2xl">✅</div>
+            <div>
+              <div className={`text-lg font-bold ${textColor}`}>검증 성공</div>
+              <div className="text-xs text-[#6b7891]">당신은 사람이군요?</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {status === 'fail' && (
+        <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
+            <div>
+              <div className={`text-lg font-bold ${textColor}`}>검증 실패</div>
+              <div className="text-xs text-[#6b7891]">
+                {error?.message || '알 수 없는 오류'}
+                {error?.code ? <span className="text-rose-500 ml-1">({error.code})</span> : null}
               </div>
             </div>
           </div>
-        )}
-
-        {status === 'fail' && (
-          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
-              <div>
-                <div className={`text-lg font-bold ${textColor}`}>검증 실패</div>
-                <div className="text-xs text-[#6b7891]">
-                  {error?.message || '알 수 없는 오류'}
-                  {error?.code ? <span className="text-rose-500 ml-1">({error.code})</span> : null}
-                </div>
-              </div>
-            </div>
-            <div className="mt-5">
-              <button
-                onClick={handleRetry}
-                className="rounded-xl bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] px-4 py-2 text-sm font-bold text-white shadow-[0_8px_24px_rgba(74,139,255,0.35)] hover:-translate-y-0.5 transition-transform"
-              >
-                다시 시도
-              </button>
-            </div>
+          <div className="mt-5">
+            <button
+              onClick={handleRetry}
+              className="rounded-xl bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] px-4 py-2 text-sm font-bold text-white shadow-[0_8px_24px_rgba(74,139,255,0.35)] hover:-translate-y-0.5 transition-transform"
+            >
+              다시 시도
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
