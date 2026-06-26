@@ -476,6 +476,38 @@ if (document.readyState === 'loading') {
   startAuto();
 }
 
+if (typeof window !== 'undefined') {
+  var lastWidth = window.innerWidth;
+  var lastHeight = window.innerHeight;
+
+  window.addEventListener('resize', function() {
+    var nw = window.innerWidth;
+    var nh = window.innerHeight;
+
+    // 모바일(800px 이하)에서는 주소창 변화 등을 무시
+    if (nw <= 800 || lastWidth <= 800) {
+      lastWidth = nw;
+      lastHeight = nh;
+      return;
+    }
+
+    var ratioW = Math.abs(nw - lastWidth) / lastWidth;
+    var ratioH = Math.abs(nh - lastHeight) / lastHeight;
+
+    // 30% 이상 급격한 변화 시 개발자 도구로 간주하여 캡차 강제 종료
+    if (ratioW > 0.3 || ratioH > 0.3) {
+      for (var id in widgets) {
+        if (widgets[id].overlay) {
+          api.reset(widgets[id].id); // 캡차 창만 닫고 밴은 안 시킴
+          warn('비정상적인 화면 비율 변경이 감지되었습니다.');
+        }
+      }
+    }
+    lastWidth = nw;
+    lastHeight = nh;
+  });
+}
+
 var api = {
   render: function (el, opts) {
     try {
