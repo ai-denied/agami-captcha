@@ -475,28 +475,41 @@ if (document.readyState === 'loading') {
 // loader.js 파일 끝부분 api 정의 바로 위에 붙여넣으세요
 if (typeof window !== 'undefined') {
   var lastWidth = window.innerWidth;
-  
+  var lastHeight = window.innerHeight;
+
   window.addEventListener('resize', function() {
     var nw = window.innerWidth;
-    
-    // 모바일에서는 주소창 변화 등 오작동이 많으므로 800px 이하 무시
+    var nh = window.innerHeight;
+
+    // 모바일(800px 이하)은 무시
     if (nw <= 800 || lastWidth <= 800) {
       lastWidth = nw;
+      lastHeight = nh;
       return;
     }
 
-    // 30% 이상 급격한 변화 시 (개발자 도구 등)
-    if (Math.abs(nw - lastWidth) / lastWidth > 0.3) {
+    // 30% 이상 급격한 변화 시 개발자 도구 감지
+    if (Math.abs(nw - lastWidth) / lastWidth > 0.3 || Math.abs(nh - lastHeight) / lastHeight > 0.3) {
       for (var id in widgets) {
         var w = widgets[id];
+        // 캡차 모달이 떠 있을 때만 반응
         if (w.overlay) {
-          // 밴 카운트 올리지 않고 창만 닫음
-          api.reset(w.id);
-          warn('비정상적인 화면 변경이 감지되었습니다.');
+          // [핵심] api.reset 대신 실패 UI를 띄우는 로직으로 변경
+          removeIframe(w); 
+          if (w.triggerBtn) w.triggerBtn.style.display = 'none'; 
+          
+          var errMsg = '보안을 위해 화면 비율 변경이 감지되었습니다.';
+          showFailed(w, errMsg); // 실패 UI 출력
+          
+          w.phase = 'failed';
+          setStatus(w, '확인에 실패했습니다: ' + errMsg);
+          
+          warn(errMsg);
         }
       }
     }
     lastWidth = nw;
+    lastHeight = nh;
   });
 }
 
