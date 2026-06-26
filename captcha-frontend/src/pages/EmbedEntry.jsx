@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useCaptcha } from '../hooks/useCaptcha';
 import CaptchaRouter from '../components/CaptchaRouter';
@@ -26,17 +26,32 @@ export default function EmbedEntry() {
   const rawDiff = (searchParams.get('difficulty') ?? 'easy').toLowerCase();
   const difficulty = DIFFICULTY_MAP[rawDiff] ?? 'easy';
   
-  const theme = searchParams.get('theme') || 'light';
-  const isDark = theme === 'dark';
-  const bgColor = isDark ? 'bg-[#1a1a1b]' : 'bg-white';
-  const textColor = isDark ? 'text-white' : 'text-[#1d2a44]';
-  
   const rawClientKey = searchParams.get('client_key'); 
   const clientKeyProvided = rawClientKey !== null;
   const clientKeyFormatInvalid = clientKeyProvided && !isValidClientKeyFormat(rawClientKey);
   const clientKey = clientKeyProvided ? rawClientKey : undefined;
 
   const { status, spec, token, error, start, submit } = useCaptcha({ kind, difficulty, clientKey });
+
+  // [핵심 조치] 실시간 다크모드 감지 및 상태 동기화
+  const themeParam = searchParams.get('theme') || 'auto';
+  const [isDark, setIsDark] = useState(() => {
+    if (themeParam === 'dark') return true;
+    if (themeParam === 'light') return false;
+    // auto일 경우 현재 시스템 설정 감지
+    return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    if (themeParam !== 'auto') return; // 명시적으로 지정된 경우 시스템 변경 무시
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e) => setIsDark(e.matches);
+    mq.addEventListener?.('change', handler);
+    return () => mq.removeEventListener?.('change', handler);
+  }, [themeParam]);
+
+  const bgColor = isDark ? 'bg-[#1a1a1b]' : 'bg-white';
+  const textColor = isDark ? 'text-white' : 'text-[#1d2a44]';
 
   const wid = searchParams.get('wid') || undefined; 
   const isEmbedded = Boolean(wid); 
@@ -90,7 +105,7 @@ export default function EmbedEntry() {
         challengeId: spec?.challenge_id ?? null,
         challengeType: spec?.kind ?? null,
         captchaToken: null,
-        error: error // [핵심 수정] loader.js가 실패 사유를 알 수 있도록 error 객체 추가
+        error: error
       });
       sentRef.current = true;
     }
@@ -142,11 +157,11 @@ export default function EmbedEntry() {
   if (clientKeyFormatInvalid) {
     return (
       <div className={rootClass}>
-        <div className={`mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 ${cardEdge}`}>
+        <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
             <div>
-              <div className="text-lg font-bold text-[#1d2a44]">잘못된 사이트 키</div>
+              <div className={`text-lg font-bold ${textColor}`}>잘못된 사이트 키</div>
               <div className="text-xs text-[#6b7891]">
                 임베드 URL 의 client_key 형식이 올바르지 않습니다.
                 <span className="text-rose-500 ml-1">(invalid_client_key_format)</span>
@@ -160,9 +175,23 @@ export default function EmbedEntry() {
 
   return (
     <div ref={rootRef} className={rootClass}>
-      <div className={`w-full max-w-5xl ${isDark ? 'dark' : ''}`}>
+      
+      {/* [핵심 조치] 하위 컴포넌트들의 하얀색 하드코딩을 덮어씌워 강제 다크모드화 */}
+      {isDark && (
+        <style>{`
+          .bg-white { background-color: #1a1a1b !important; }
+          .text-\\[\\#1d2a44\\] { color: #f8fafc !important; }
+          .text-\\[\\#6b7891\\] { color: #94a3b8 !important; }
+          .text-\\[\\#8a96ad\\] { color: #64748b !important; }
+          .border-\\[\\#e0e7f3\\], .border-\\[1\\.5px\\] { border-color: #334155 !important; }
+          .bg-\\[\\#f0f4fb\\] { background-color: #0f172a !important; }
+          .bg-\\[\\#eef4ff\\] { background-color: rgba(74, 139, 255, 0.1) !important; }
+          .border-\\[\\#c8dcff\\] { border-color: rgba(74, 139, 255, 0.2) !important; }
+        `}</style>
+      )}
+
+      <div className={`w-full max-w-5xl`}>
         {(status === 'idle' || status === 'loading') && (
-          // 로딩창도 테마 적용
           <div className={`mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl ${bgColor} ${cardEdge}`}>
             <div className={`flex items-center gap-3 ${isDark ? 'text-gray-400' : 'text-[#6b7891]'}`}>
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#e0e7f3] border-t-[#4a8bff]" />
@@ -171,7 +200,6 @@ export default function EmbedEntry() {
           </div>
         )}
 
-        {/* CaptchaRouter 등 하위 컴포넌트에도 props로 isDark를 넘겨주어 내부 색상도 바꿀 수 있게 합니다 */}
         {status === 'active' && spec && (
           <CaptchaRouter
             kind={kind}
@@ -181,7 +209,6 @@ export default function EmbedEntry() {
             onSubmit={submit}
             onRefresh={start}
             embedded={isEmbedded}
-            theme={theme} 
           />
         )}
 
@@ -190,7 +217,7 @@ export default function EmbedEntry() {
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-2xl">✅</div>
               <div>
-                <div className="text-lg font-bold text-[#1d2a44]">검증 성공</div>
+                <div className={`text-lg font-bold ${textColor}`}>검증 성공</div>
                 <div className="text-xs text-[#6b7891]">당신은 사람이군요?</div>
               </div>
             </div>
@@ -198,11 +225,11 @@ export default function EmbedEntry() {
         )}
 
         {status === 'fail' && (
-          <div className={`mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 ${cardEdge}`}>
+          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
               <div>
-                <div className="text-lg font-bold text-[#1d2a44]">검증 실패</div>
+                <div className={`text-lg font-bold ${textColor}`}>검증 실패</div>
                 <div className="text-xs text-[#6b7891]">
                   {error?.message || '알 수 없는 오류'}
                   {error?.code ? <span className="text-rose-500 ml-1">({error.code})</span> : null}
