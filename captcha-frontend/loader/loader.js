@@ -184,16 +184,13 @@ function makeVerified(theme) {
   var dark = theme === 'dark';
   var v = document.createElement('div');
   v.setAttribute('class', 'agami-verified');
-  v.style.cssText =
-    'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
-    'min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' +
-    (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
   var green = dark ? '#34d399' : '#16a34a';
-  var iconBg = dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)';
+  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
-    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';">' +
-      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="' + green + '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;" alt="success" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
@@ -252,7 +249,29 @@ function makeFailed(w, errMsg) {
 
 function showFailed(w, errMsg) {
   if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; }
-  w.failedEl = makeFailed(w, errMsg);
+  w.failedEl = function makeFailed(w, errMsg) {
+  var dark = w.theme === 'dark';
+  var v = document.createElement('div');
+  v.setAttribute('class', 'agami-failed');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
+  
+  var red = dark ? '#fb7185' : '#e11d48';
+  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
+  v.innerHTML =
+    '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
+    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
+    '</span>' +
+    '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
+      '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
+      '<span style="font:12px system-ui,-apple-system,sans-serif;color:' + (dark ? '#a1a1aa' : '#64748b') + ';">' + errMsg + '</span>' +
+    '</div>' +
+    '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;transition:opacity 0.2s;white-space:nowrap;flex:none;">다시 시도</button>';
+    
+  var retryBtn = v.querySelector('.agami-retry-btn');
+  retryBtn.onclick = function(e) { e.stopPropagation(); api.reset(w.id); if (w.triggerBtn) w.triggerBtn.click(); };
+  return v;
+}(w, errMsg);
   w.div.appendChild(w.failedEl);
 }
 
@@ -319,21 +338,12 @@ function renderInto(div, opts) {
 function mountIframe(w) {
   var overlay = document.createElement('div');
   overlay.id = w.id + '-overlay';
-  // 배경을 어둡게 하고, 내부 iframe을 중앙 정렬합니다.
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
-
-  overlay.onclick = function (e) {
-    if (e.target === overlay) api.reset(w.id);
-  };
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+  overlay.onclick = function (e) { if (e.target === overlay) api.reset(w.id); };
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
-  iframe.title = 'Agami CAPTCHA';
-  iframe.setAttribute('frameborder', '0');
-  iframe.setAttribute('scrolling', 'no');
-  
-  // [핵심] modalBox 제거: iframe이 곧 모달창입니다. 배경을 투명하게 해서 React가 그리는 색상을 따릅니다.
-  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.2);display:block;background:transparent;';
+  iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
 
