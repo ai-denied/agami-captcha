@@ -147,15 +147,11 @@ export default function EmbedEntry() {
   const rootClass = isEmbedded
     ? 'flex justify-center'
     : 'min-h-screen bg-gradient-to-br from-[#f5f8ff] to-[#e8f0ff] flex items-center justify-center px-4 py-8';
-  
-  const cardEdge = isEmbedded
-    ? 'border border-gray-200 shadow-sm'
-    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
 
   if (clientKeyFormatInvalid) {
     return (
       <div className={rootClass}>
-        <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
+        <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8`}>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
             <div>
@@ -216,7 +212,7 @@ export default function EmbedEntry() {
 
         {/* 팀원 연동/테스트를 위한 성공 화면 DOM */}
         {status === 'success' && (
-          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
+          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-2xl">✅</div>
               <div>
@@ -229,7 +225,7 @@ export default function EmbedEntry() {
 
         {/* 팀원 연동/테스트를 위한 실패 화면 DOM */}
         {status === 'fail' && (
-          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
+          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
               <div>
