@@ -1,49 +1,11 @@
 /**
  * Agami CAPTCHA Loader (Stage 2)
- * ==============================
- * "script 태그 + 내부 iframe" 임베드용 얇은 래퍼.
- * 회원사는 script 한 줄 + div 한 줄만 넣으면 캡차가 뜬다.
- *
- * - 바닐라 JS만 사용. React/프레임워크/외부 라이브러리 의존성 0.
- * - 전역은 window.agami 하나만 노출 (reCAPTCHA/hCaptcha/Turnstile 호환 API).
- * - iframe 내부 위젯(EmbedEntry)은 이미 완성돼 있으므로 그대로 재사용한다.
- *   새 캡차 로직은 만들지 않는다.
- *
- * 트리거(인라인 확장) 모델 — 위젯 단위 상태머신(widgets[wid].phase):
- *   idle(트리거 버튼만) → [클릭] → expanded(iframe+챌린지)
- *     → [agami-result success] → verified(iframe 접힘 + ✓)
- *     → [agami-result fail]    → idle(iframe 제거, 버튼 복원)
- *   reset() → idle(iframe 제거, 버튼 복원). 재도전은 트리거 버튼 재클릭.
- *   ※ iframe(=챌린지 발급)은 트리거 클릭 시점에만 생성한다(렌더 즉시 아님).
- *
- * iframe → loader 메시지(EmbedEntry 발신):
- *   { type:'agami-result', success, challengeId, challengeType, captchaToken, wid }
- *   - wid 에코가 실제로 오므로(EmbedEntry + parentMessaging 라이브) data.wid 를
- *     우선 라우팅하고, 없으면 event.source(iframe.contentWindow) 매칭으로 폴백한다.
- *   - 'agami-ready'(첫 표시 완료) / 'agami-resize'(높이 통지) 도 라이브로 수신한다.
- *     안 와도 깨지지 않도록 onload + 타임아웃으로 로딩 표시를 제거한다.
  */
 
-// ---------------------------------------------------------------------------
-// 0. 서비스 origin / embed base 결정.
-//    우선순위(높은 것부터):
-//      (1) <script ... data-embed-base="https://.../widget/embed">
-//      (2) window.AGAMI_EMBED_BASE
-//      (3) loader 자신이 로드된 origin 에서 유도 (기본/폴백 — 기존과 동일)
-//    ※ override 미설정 시 (3) 으로 가며 동작은 기존과 1바이트도 다르지 않다
-//       (프로덕션 회원은 hook 을 안 쓰므로 무영향 — 최우선 안전 제약).
-//    ※ override 값은 "절대 http(s) URL(embed base 전체)" 만 허용. 상대경로/빈값/
-//       비-http 는 무시하고 폴백. (검증용/환경분리: 로컬 loader + 원격 embed.)
-//    ※ override 의 origin 은 SERVICE_ORIGIN(postMessage 게이트)도 된다 — iframe 이
-//       그 origin 에서 로드되므로 결과/ready/resize 메시지가 그 origin 으로 온다.
-//       이걸 안 맞추면 게이트(아래 onMessage)에서 전부 막혀 검증이 무의미해진다.
-//       (원본도 EMBED_BASE 와 SERVICE_ORIGIN 을 동일 출처에서 함께 유도했다.)
-// ---------------------------------------------------------------------------
 function currentScriptEl() {
   if (document.currentScript && document.currentScript.src) {
     return document.currentScript;
   }
-  // currentScript 를 못 잡는 경우(비동기 주입 등): src 에 loader.js 가 든 마지막 script.
   var scripts = document.getElementsByTagName('script');
   for (var i = scripts.length - 1; i >= 0; i--) {
     if (scripts[i].src && scripts[i].src.indexOf('loader.js') !== -1) {
@@ -53,9 +15,6 @@ function currentScriptEl() {
   return null;
 }
 
-// override 후보 1개를 "절대 http(s) URL" 로 검증 → { base, origin } 또는 null.
-//   - new URL(raw) 에 base 를 주지 않으므로 상대경로/빈값이면 throw → null(폴백).
-//   - http/https 만 허용(file:/javascript: 등 차단). 끝의 '/' 는 정규화로 제거.
 function normalizeEmbedBase(raw) {
   if (typeof raw !== 'string' || !raw) return null;
   try {
@@ -68,7 +27,6 @@ function normalizeEmbedBase(raw) {
   }
 }
 
-// 우선순위: data-embed-base(스크립트 태그) > window.AGAMI_EMBED_BASE.
 function readEmbedBaseOverride() {
   var fromAttr = (SCRIPT_EL && SCRIPT_EL.getAttribute) ? SCRIPT_EL.getAttribute('data-embed-base') : null;
   var picked = normalizeEmbedBase(fromAttr);
@@ -79,34 +37,26 @@ function readEmbedBaseOverride() {
 
 var SCRIPT_EL = currentScriptEl();
 var SCRIPT_SRC = (SCRIPT_EL && SCRIPT_EL.src) || '';
-var SERVICE_ORIGIN = ''; // postMessage origin 검증 기준
-var EMBED_BASE = ''; // iframe src 의 베이스 ('.../widget/embed')
+var SERVICE_ORIGIN = ''; 
+var EMBED_BASE = ''; 
 
 var EMBED_OVERRIDE = readEmbedBaseOverride();
 if (EMBED_OVERRIDE) {
-  // override: embed base 와 서비스 origin 을 함께 고정(둘 다 같은 출처여야 메시지 통과).
   EMBED_BASE = EMBED_OVERRIDE.base;
   SERVICE_ORIGIN = EMBED_OVERRIDE.origin;
 } else {
-  // 기본/폴백: loader 자신의 src origin 에서 유도(기존과 동일 — 무override 시 무변경).
   try {
     var u = new URL(SCRIPT_SRC, (typeof location !== 'undefined' ? location.href : undefined));
     SERVICE_ORIGIN = u.origin;
-    // loader.js 와 embed 는 같은 디렉토리(/widget/) 의 형제 → loader.js 를 embed 로 치환.
     EMBED_BASE = u.href.slice(0, u.href.lastIndexOf('/')) + '/embed';
-  } catch (e) {
-    // 유도 실패: render 시 경고. (그래도 페이지를 죽이지 않는다.)
-  }
+  } catch (e) {}
 }
 
-// ---------------------------------------------------------------------------
-// 1. 내부 상태
-// ---------------------------------------------------------------------------
-var widgets = {}; // widgetId -> { id, div, iframe, kind, sitekey, token, callback, errorCallback, readyTimer, phase, triggerBtn, statusEl, verifiedEl, theme }
+var widgets = {};
 var seq = 0;
 
 function warn(msg) {
-  try { console.warn('[agami] ' + msg); } catch (e) { /* no-op */ }
+  try { console.warn('[agami] ' + msg); } catch (e) {}
 }
 
 function genId() {
@@ -120,14 +70,12 @@ function resolveEl(el) {
   return null;
 }
 
-// 콜백은 함수 또는 전역 함수 이름(data-callback="onSubmit") 둘 다 허용.
 function resolveCb(cb) {
   if (typeof cb === 'function') return cb;
   if (typeof cb === 'string' && cb && typeof window[cb] === 'function') return window[cb];
   return null;
 }
 
-// auto: 로드 시점 prefers-color-scheme 1회 해석(실시간 OS 전환 반영은 다음 사이클). matchMedia 가드 필수.
 function resolveAuto() {
   return (typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'
@@ -135,8 +83,7 @@ function resolveAuto() {
     ? 'dark' : 'light';
 }
 
-// buildSrc 함수 수정
-function buildSrc(kind, sitekey, wid, theme) { // theme 파라미터 추가
+function buildSrc(kind, sitekey, wid, theme) {
   var parts = [];
   parts.push('kind=' + encodeURIComponent(kind || 'flashlight'));
   if (sitekey) parts.push('client_key=' + encodeURIComponent(sitekey));
@@ -146,9 +93,6 @@ function buildSrc(kind, sitekey, wid, theme) { // theme 파라미터 추가
   return EMBED_BASE + '?' + parts.join('&');
 }
 
-// ---------------------------------------------------------------------------
-// 2. 로딩 표시 / hidden input
-// ---------------------------------------------------------------------------
 function makeSpinner() {
   var s = document.createElement('div');
   s.setAttribute('data-agami-loading', '1');
@@ -161,10 +105,8 @@ function makeSpinner() {
 
 function clearSpinner(w) {
   if (w.readyTimer) { clearTimeout(w.readyTimer); w.readyTimer = null; }
-  
   var searchRoot = w.overlay ? w.overlay : w.div;
   var s = searchRoot.querySelector('[data-agami-loading]');
-  
   if (s && s.parentNode) s.parentNode.removeChild(s);
 }
 
@@ -179,20 +121,14 @@ function setHidden(w, value) {
   input.value = value || '';
 }
 
-// ---------------------------------------------------------------------------
-// 3. 트리거/상태 UI 헬퍼 (idle ↔ expanded ↔ verified)
-// ---------------------------------------------------------------------------
 function removeEl(el) {
-  // .remove() 대신 parentNode.removeChild — 구형/목 호환(기존 clearSpinner 와 동일 관례).
   if (el && el.parentNode) el.parentNode.removeChild(el);
 }
 
-// 트리거 버튼: 네이티브 <button> → Enter/Space 키보드 활성화 자동(WAI-ARIA button 패턴).
-//   비주얼만 테마별(light|dark) 분기. 접근명=라벨 텍스트("사람인지 확인"), 장식 SVG 는 aria-hidden.
 function makeTrigger(onClick, theme) {
   var dark = theme === 'dark';
   var b = document.createElement('button');
-  b.setAttribute('type', 'button'); // 폼 자동제출 방지
+  b.setAttribute('type', 'button'); 
   b.setAttribute('class', 'agami-trigger');
   b.style.cssText =
     'all:unset;cursor:pointer;display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
@@ -209,7 +145,7 @@ function makeTrigger(onClick, theme) {
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + labelColor + ';">사람인지 확인</span>' +
     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="' + chevron + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  // hover: 인라인 아키텍처 유지 → JS 핸들러로 transition 토글(스타일시트 주입 안 함).
+  
   b.onmouseenter = function () {
     b.style.transform = 'translateY(-1px)';
     if (!dark) { b.style.borderColor = '#5B8BF7'; b.style.boxShadow = '0 2px 12px rgba(91,139,247,.14)'; }
@@ -218,11 +154,10 @@ function makeTrigger(onClick, theme) {
     b.style.transform = '';
     if (!dark) { b.style.borderColor = '#e3e6ec'; b.style.boxShadow = ''; }
   };
-  b.onclick = onClick; // .onclick 프로퍼티(기존 관례 유지 — 상태머신 무변경)
+  b.onclick = onClick; 
   return b;
 }
 
-// 상태 안내 영역: aria-live="polite" + 시각상 sr-only(스크린리더 전용 안내).
 function makeStatus() {
   var s = document.createElement('div');
   s.setAttribute('class', 'agami-status');
@@ -232,11 +167,11 @@ function makeStatus() {
     'overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;';
   return s;
 }
+
 function setStatus(w, msg) {
   if (w.statusEl) w.statusEl.textContent = msg;
 }
 
-// verified 표시: 트리거와 동일한 바 형태(좌측 액센트 + 원형 아이콘에 체크 + 라벨 "확인됨"). 성공=그린.
 function makeVerified(theme) {
   var dark = theme === 'dark';
   var v = document.createElement('div');
@@ -255,6 +190,7 @@ function makeVerified(theme) {
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
 }
+
 function showVerified(w) {
   if (!w.verifiedEl) {
     w.verifiedEl = makeVerified(w.theme);
@@ -263,11 +199,55 @@ function showVerified(w) {
     w.verifiedEl.hidden = false;
   }
 }
+
 function removeVerified(w) {
   if (w.verifiedEl) { removeEl(w.verifiedEl); w.verifiedEl = null; }
 }
 
-// iframe 제거(+스피너/타이머 정리). idle 복귀 시 사용.
+// [핵심 조치 3] 실패 상태 시 표시할 빨간색 알림창 (다시 시도 버튼 포함) UI 생성 함수
+function makeFailed(w, errMsg) {
+  var dark = w.theme === 'dark';
+  var v = document.createElement('div');
+  v.setAttribute('class', 'agami-failed');
+  v.style.cssText =
+    'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
+    'min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' +
+    (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
+  
+  var red = dark ? '#fb7185' : '#e11d48';
+  var iconBg = dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)';
+  var titleColor = dark ? '#fff' : '#2c313b';
+  var descColor = dark ? '#a1a1aa' : '#64748b';
+
+  v.innerHTML =
+    '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
+    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';">' +
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="' + red + '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+    '</span>' +
+    '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
+      '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + titleColor + ';">검증 실패</span>' +
+      '<span style="font:12px system-ui,-apple-system,sans-serif;color:' + descColor + ';">' + errMsg + '</span>' +
+    '</div>' +
+    '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;transition:opacity 0.2s;white-space:nowrap;flex:none;">다시 시도</button>';
+    
+  var retryBtn = v.querySelector('.agami-retry-btn');
+  retryBtn.onmouseenter = function() { retryBtn.style.opacity = '0.8'; };
+  retryBtn.onmouseleave = function() { retryBtn.style.opacity = '1'; };
+  retryBtn.onclick = function(e) {
+    e.stopPropagation();
+    api.reset(w.id); 
+    if (w.triggerBtn) w.triggerBtn.click(); // 즉시 다시 열기
+  };
+
+  return v;
+}
+
+function showFailed(w, errMsg) {
+  if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; }
+  w.failedEl = makeFailed(w, errMsg);
+  w.div.appendChild(w.failedEl);
+}
+
 function removeIframe(w) {
   if (w.iframe) {
     clearSpinner(w);
@@ -279,9 +259,6 @@ function removeIframe(w) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 4. 코어 렌더 (트리거 버튼만 부착; iframe 은 클릭 시 mountIframe 로 생성)
-// ---------------------------------------------------------------------------
 function renderInto(div, opts) {
   opts = opts || {};
   if (!EMBED_BASE) warn('loader origin 을 유도하지 못했습니다. iframe src 가 비정상일 수 있습니다.');
@@ -290,7 +267,6 @@ function renderInto(div, opts) {
   var kind = opts.kind || 'flashlight';
   var sitekey = opts.sitekey || '';
   if (!sitekey) warn('sitekey(data-sitekey) 가 없습니다. 백엔드 기본 키로 폴백될 수 있습니다.');
-  // 테마(비주얼 전용): 'auto'(기본) | 'light' | 'dark'. auto=prefers-color-scheme 추종, 무효값→auto.
   var pref = String(opts.theme == null ? 'auto' : opts.theme).toLowerCase().trim();
   if (pref !== 'light' && pref !== 'dark') pref = 'auto';
   var theme = (pref === 'auto') ? resolveAuto() : pref;
@@ -298,31 +274,30 @@ function renderInto(div, opts) {
   var w = {
     id: id,
     div: div,
-    iframe: null, // ★ 트리거 클릭 전까지 생성하지 않음(챌린지 발급 지연)
+    iframe: null,
     kind: kind,
     sitekey: sitekey,
     token: '',
     callback: resolveCb(opts.callback),
     errorCallback: resolveCb(opts.errorCallback),
     readyTimer: null,
-    phase: 'idle', // idle → expanded → verified (위젯 단위 상태머신)
+    phase: 'idle', 
     triggerBtn: null,
     statusEl: null,
     verifiedEl: null,
-    theme: theme, // 'light' | 'dark' — 비주얼 전용(상태머신 무관)
+    failedEl: null,
+    theme: theme, 
   };
   widgets[id] = w;
-  div.setAttribute('data-agami-rendered', id); // 중복 렌더 방지 표식
+  div.setAttribute('data-agami-rendered', id); 
 
-  // 상태 안내(aria-live, sr-only) 먼저 부착.
   w.statusEl = makeStatus();
   div.appendChild(w.statusEl);
 
-  // 트리거 버튼 부착(idle). 클릭 → iframe 마운트 → expanded.
   w.triggerBtn = makeTrigger(function () {
-    if (w.phase !== 'idle') return; // 중복 클릭/비정상 전이 방지
+    if (w.phase !== 'idle') return; 
     mountIframe(w);
-    w.triggerBtn.hidden = true;
+    w.triggerBtn.style.display = 'none';
     w.phase = 'expanded';
     setStatus(w, '확인을 시작합니다');
   }, theme);
@@ -331,33 +306,31 @@ function renderInto(div, opts) {
   return id;
 }
 
-// iframe(=EmbedEntry/챌린지) 생성·삽입. 트리거 클릭 또는 명시 호출 시점에만 실행.
+// [핵심 조치 1] 모달 박스를 완전 제거하고 iframe을 네이티브 모달처럼 사용하여 여백 불일치(블랙 갭) 완벽 해결
 function mountIframe(w) {
   var overlay = document.createElement('div');
   overlay.id = w.id + '-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
 
-  // 배경 클릭 시 캡차 취소 (초기화)
+  // 검은 여백을 클릭하면 창 닫기
   overlay.onclick = function (e) {
     if (e.target === overlay) api.reset(w.id);
   };
-
-  var modalBox = document.createElement('div');
-  modalBox.style.cssText = 'width:90%;max-width:500px;background:' + (w.theme === 'dark' ? '#1a1a1b' : '#fff') + ';border-radius:12px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.2);';
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
   iframe.title = 'Agami CAPTCHA';
   iframe.setAttribute('frameborder', '0');
   iframe.setAttribute('scrolling', 'no');
-  iframe.style.cssText = 'width:100%;height:90px;border:0;display:block; transition: height 0.2s ease;';
+  // 배경을 투명으로 하고 모서리를 둥글게하여 React 내부 카드와 혼연일체 되도록 구성
+  iframe.style.cssText = 'width:90%;max-width:500px;height:120px;border:0;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.15);display:block;transition:height 0.2s ease;background:transparent;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
 
   var spinner = makeSpinner();
-  modalBox.appendChild(spinner);
-  modalBox.appendChild(iframe);
-  overlay.appendChild(modalBox);
+  spinner.style.position = 'absolute';
+  overlay.appendChild(spinner);
+  overlay.appendChild(iframe);
 
   document.body.appendChild(overlay);
 
@@ -370,13 +343,8 @@ function mountIframe(w) {
   return iframe;
 }
 
-// ---------------------------------------------------------------------------
-// 5. postMessage 수신 (window 단일 리스너 — 위젯별 분기)
-// ---------------------------------------------------------------------------
 function findWidget(data, source) {
-  // data.wid 가 레지스트리에 있으면 우선(EmbedEntry 가 wid 를 에코 — 라이브).
   if (data && data.wid && widgets[data.wid]) return widgets[data.wid];
-  // 폴백: source(iframe.contentWindow) 매칭(라이브 read — reset/재마운트로 바뀌어도 최신값 비교).
   for (var k in widgets) {
     if (Object.prototype.hasOwnProperty.call(widgets, k)) {
       if (widgets[k].iframe && widgets[k].iframe.contentWindow === source) return widgets[k];
@@ -385,7 +353,6 @@ function findWidget(data, source) {
   return null;
 }
 
-// loader.js 내 5번 항목의 onMessage 함수 전체 교체
 function onMessage(event) {
   if (!SERVICE_ORIGIN || event.origin !== SERVICE_ORIGIN) return;
   var data = event.data;
@@ -397,7 +364,6 @@ function onMessage(event) {
   switch (data.type) {
     case 'agami-result':
       if (data.success) {
-        // 성공 시: 창 닫고 검증 중 로딩 띄운 후 완료 처리 (기존과 동일)
         removeIframe(w);
         if (w.triggerBtn) w.triggerBtn.style.display = 'none';
 
@@ -433,14 +399,21 @@ function onMessage(event) {
         }, 1500);
         
       } else {
-        // [핵심 변경점] 실패 시 창을 부수는 removeIframe 코드를 삭제했습니다.
-        // 이제 창이 꺼지지 않고 React 내부에 구현된 '❌ 검증 실패' 화면이 노출됩니다.
+        // [핵심 조치] 실패 시 모달 창을 없애고 호스트 페이지 영역에 실패 UI와 다시하기 버튼 표시
         w.token = '';
         setHidden(w, '');
         if (w.errorCallback) {
           try { w.errorCallback(data); } catch (e) { warn('errorCallback 예외: ' + e); }
         }
-        setStatus(w, '확인에 실패했습니다. 창 내에서 다시 시도해 주세요.');
+        
+        removeIframe(w); 
+        if (w.triggerBtn) w.triggerBtn.style.display = 'none'; 
+        
+        var errMsg = (data.error && data.error.message) ? data.error.message : '알 수 없는 오류가 발생했습니다.';
+        showFailed(w, errMsg); 
+        
+        w.phase = 'failed';
+        setStatus(w, '확인에 실패했습니다: ' + errMsg);
       }
       break;
     case 'agami-ready': 
@@ -461,18 +434,15 @@ if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('message', onMessage, false);
 }
 
-// ---------------------------------------------------------------------------
-// 6. implicit 자동 렌더 (.agami-captcha 스캔 + MutationObserver)
-// ---------------------------------------------------------------------------
 function renderFromEl(el) {
   if (!el || el.nodeType !== 1) return;
-  if (el.getAttribute('data-agami-rendered')) return; // 이미 렌더됨
+  if (el.getAttribute('data-agami-rendered')) return; 
   renderInto(el, {
     sitekey: el.getAttribute('data-sitekey'),
     kind: el.getAttribute('data-kind') || 'flashlight',
     callback: el.getAttribute('data-callback'),
     errorCallback: el.getAttribute('data-error-callback'),
-    theme: el.getAttribute('data-theme'), // 비주얼 전용: 'light'(기본) | 'dark'
+    theme: el.getAttribute('data-theme'), 
   });
 }
 
@@ -492,30 +462,20 @@ function startAuto() {
         var n = added[j];
         if (!n || n.nodeType !== 1) continue;
         if (n.classList && n.classList.contains('agami-captcha')) renderFromEl(n);
-        if (n.querySelectorAll) scanAll(n); // 추가된 서브트리 내부도 스캔
+        if (n.querySelectorAll) scanAll(n); 
       }
     }
   });
   mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
 }
 
-// 스크립트가 head/body 어디에 있든, DOMContentLoaded 가 이미 지난 경우도 처리.
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', startAuto);
 } else {
   startAuto();
 }
 
-// ---------------------------------------------------------------------------
-// 7. 공개 API (window.agami)
-// ---------------------------------------------------------------------------
 var api = {
-  /**
-   * explicit 렌더.
-   * @param {string|Element} el  선택자 또는 DOM 엘리먼트
-   * @param {{sitekey?:string,kind?:string,callback?:Function|string,errorCallback?:Function|string}} opts
-   * @returns {string|undefined} widgetId
-   */
   render: function (el, opts) {
     try {
       var div = resolveEl(el);
@@ -526,20 +486,19 @@ var api = {
       if (o.theme == null) o.theme = div.getAttribute('data-theme');
       return renderInto(div, o);
     } catch (e) {
-      warn('render 예외: ' + e); // throw 로 페이지를 죽이지 않는다.
+      warn('render 예외: ' + e); 
     }
   },
 
-  /** 해당 위젯을 idle 로 되돌림: 토큰/hidden 비우고 iframe·verified 제거, 트리거 버튼 복원.
-   *  재도전은 사용자가 트리거 버튼을 다시 클릭 → 새 iframe 마운트 → 새 챌린지. */
   reset: function (widgetId) {
     try {
       var w = widgets[widgetId];
       if (!w) { warn('reset: 알 수 없는 widgetId: ' + widgetId); return; }
       w.token = '';
       setHidden(w, '');
-      removeIframe(w); // 재로드(src 갈아끼우기) 대신 제거 → idle 복귀
+      removeIframe(w); 
       removeVerified(w);
+      if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; } 
       if (w.triggerBtn) w.triggerBtn.style.display = ''; 
       w.phase = 'idle';
       setStatus(w, '초기화되었습니다');
