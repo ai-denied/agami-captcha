@@ -185,10 +185,9 @@ function makeVerified(theme) {
   var v = document.createElement('div');
   v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
   var green = dark ? '#34d399' : '#16a34a';
-  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
-      '<img src="pass.png" style="width:22px;height:22px;filter:hue-rotate(90deg);" alt="success" />' +
+      '<img src="/pass.png" style="width:22px;height:22px;filter:hue-rotate(90deg);" alt="success" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
@@ -213,10 +212,9 @@ function makeFailed(w, errMsg) {
   v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:8px 18px;border-radius:12px;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
   
   var red = dark ? '#fb7185' : '#e11d48';
-  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
     '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
-      '<img src="fail.png" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
+      '<img src="/fail.png" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
     '</span>' +
     '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;">' +
       '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
@@ -236,11 +234,10 @@ function showFailed(w, errMsg) {
   v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
   
   var red = dark ? '#fb7185' : '#e11d48';
-  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
     '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
-      '<img src="' + fishSrc + '" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
+      '<img src="/fail.png" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
     '</span>' +
     '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
       '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
