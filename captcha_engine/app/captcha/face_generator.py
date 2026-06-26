@@ -37,6 +37,7 @@ from app.captcha.challenge_types import (
     HandInstruction,
     HandInstructionType,
     HAND_INSTRUCTION_LABELS,
+    FINGER_NAMES_KO,
 )
 
 
@@ -73,6 +74,23 @@ DIFFICULTY_PROFILES: Final[dict[Difficulty, dict]] = {
         "tolerance_sec": 0.8,
     },
 }
+
+# ---------------------------------------------------------------------------
+# A3 손동작 발급 파라미터
+# ---------------------------------------------------------------------------
+# 각 hand 슬롯은 확률 FINGER_POSE_CHANCE 로 finger_pose(손가락 지정)를, 나머지는
+# 제스처 3종(open/fist/pinch, 좌우 side 지정)을 발급한다. finger_pose 는 좌우 무관.
+GESTURE_TYPES: Final[list[HandInstructionType]] = [
+    HandInstructionType.OPEN_HAND,
+    HandInstructionType.FIST,
+    HandInstructionType.PINCH,
+]
+FINGER_POSE_CHANCE: Final[float] = 0.35  # hand 슬롯이 finger_pose 일 확률(나머지는 제스처)
+# 발급 가능한 손가락 포즈. ★ 엄지 포함 포즈는 엄지 검출 불안정성 때문에 제외(검지/V 만).
+FINGER_POSE_CATALOG: Final[list[list[str]]] = [
+    ["index"],            # 검지만 펴기
+    ["index", "middle"],  # 검지+중지(브이)
+]
 
 
 # ---------------------------------------------------------------------------
@@ -118,25 +136,35 @@ def generate_face_challenge(
         for t in chosen
     ]
 
-    # A3: 손동작 지시 생성 (face 와 동일 패턴, 별도 풀에서 중복없이 sample).
+    # A3: 손동작 지시 생성. 각 슬롯은 확률적으로 (a) 기존 제스처 3종(open/fist/pinch,
+    # 좌우 side 지정) 또는 (b) finger_pose(손가락 지정, 좌우 무관)를 발급한다.
+    # ★ finger_pose 의 엄지 포함 미션은 엄지 검출 불안정성 때문에 이번엔 발급하지 않는다
+    #   (FINGER_POSE_CATALOG 에 thumb 없음).
     hand_count: int = profile.get("hand_instruction_count", 0)
-    hand_pool = list(HandInstructionType)
-    if hand_count > len(hand_pool):
-        raise ValueError(
-            f"손동작 카탈로그({len(hand_pool)}) 보다 많은 손동작({hand_count})을 요청함."
-        )
-    chosen_hand: list[HandInstructionType] = rng.sample(hand_pool, k=hand_count)
-    # A3 side 발급 ON: 각 손동작에 좌우를 매번 지정한다("왼손 주먹" 류). rng 는 위 face
-    # 와 동일 secrets.SystemRandom. side 끄려면 hand=None 으로 두면 됨(좌우 무검증).
-    hand_instructions = [
-        HandInstruction(
-            type=t,
-            label=HAND_INSTRUCTION_LABELS[t],
-            duration_sec=duration,
-            hand=rng.choice(["left", "right"]),
-        )
-        for t in chosen_hand
-    ]
+    hand_instructions: list[HandInstruction] = []
+    for _ in range(hand_count):
+        if rng.random() < FINGER_POSE_CHANCE:
+            fingers = list(rng.choice(FINGER_POSE_CATALOG))
+            label = " + ".join(FINGER_NAMES_KO[f] for f in fingers) + " 펴기"
+            hand_instructions.append(
+                HandInstruction(
+                    type=HandInstructionType.FINGER_POSE,
+                    label=label,
+                    duration_sec=duration,
+                    hand=None,  # finger_pose 는 좌우 무관(우선 독립)
+                    fingers=fingers,
+                )
+            )
+        else:
+            t = rng.choice(GESTURE_TYPES)
+            hand_instructions.append(
+                HandInstruction(
+                    type=t,
+                    label=HAND_INSTRUCTION_LABELS[t],
+                    duration_sec=duration,
+                    hand=rng.choice(["left", "right"]),  # 제스처는 좌우 side 발급 ON
+                )
+            )
 
     challenge_id = secrets.token_urlsafe(16)
     expires_at = now + timedelta(seconds=profile["time_limit_sec"] + 10)
@@ -156,11 +184,14 @@ def generate_face_challenge(
     answer = FaceChallengeAnswer(
         challenge_id=challenge_id,
         expected_instruction_types=[t.value for t in chosen],
-        expected_hand_instruction_types=list(chosen_hand),
+        expected_hand_instruction_types=[hi.type for hi in hand_instructions],
         # 각 hand instruction 의 기대 손("left"/"right"). 위 hand=rng.choice 로 side 발급
         # ON 이라 HandInstruction.hand 에서 자동으로 흐른다. hand=None 이면 None 으로 흘러
         # 좌우 미검증(backcompat).
         expected_hand_sides=[hi.hand for hi in hand_instructions],
+        # 각 hand instruction 의 펴야 할 손가락. 발급 OFF → 전부 None(손가락 무검증).
+        # HandInstruction.fingers 를 채우면 자동 흐름(2b 발급 ON 단계).
+        expected_fingers=[hi.fingers for hi in hand_instructions],
         tolerance_sec=profile["tolerance_sec"],
         created_at=now,
         expires_at=expires_at,

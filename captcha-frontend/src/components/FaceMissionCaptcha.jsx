@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { detectInstruction, extractEvidence } from '../lib/faceDetection';
-import { detectHandGesture, extractHandEvidence, spread, pinchRatio, toUserHand } from '../lib/handDetection';
+import { detectHandGesture, extractHandEvidence, toUserHand, isFingerExtended, fingersMatch } from '../lib/handDetection';
 import FishTimer from './FishTimer';
 
 // =============================================================================
@@ -113,6 +113,9 @@ const HAND_ICON_FOR = {
 
 // A3 좌우: 사용자 손 라벨. hand 미지정(None)이면 "손"(좌우 무관, backcompat).
 const HAND_SIDE_LABELS = { left: '왼손', right: '오른손' };
+
+// A3 손가락: 표시용 한국어 라벨 (fingers 지정 미션에서 사용; 발급 OFF면 미사용).
+const FINGER_KO = { thumb: '엄지', index: '검지', middle: '중지', ring: '약지', pinky: '새끼' };
 
 const COLOR_BLUE = '#4a8bff';
 const COLOR_YELLOW = '#fbbf24';
@@ -312,13 +315,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
         if (fpsWindowStartRef.current === 0) fpsWindowStartRef.current = t1;
         const elapsed = t1 - fpsWindowStartRef.current;
         if (elapsed >= 1000) {
-          const fps = (fpsCountRef.current * 1000) / elapsed;
-          const avgMs = fpsSendMsRef.current / fpsCountRef.current;
-          console.log(
-            `[A3 FPS] face+hand 동시: ${fps.toFixed(1)} fps `
-            + `(평균 ${avgMs.toFixed(1)} ms/frame, frames=${fpsCountRef.current}) `
-            + (fps < EVIDENCE_FPS ? `⚠️ < ${EVIDENCE_FPS}fps` : '✓'),
-          );
           fpsCountRef.current = 0;
           fpsSendMsRef.current = 0;
           fpsWindowStartRef.current = t1;
@@ -402,6 +398,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             .map((b) => ({
               type: b.type,
               hand: b.hand ?? null,
+              fingers_state: b.fingers_state ?? null,
               completed_at_t: b.completed_at_t ?? null,
               frames: b.frames,
             })),
@@ -456,26 +453,38 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     const nowMs = Date.now();
     const gesture = detectHandGesture(lm);
     if (nowMs - lastHandEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
+      // A3 손가락: 관측 폄 상태(서버는 frames 로 재계산하지만 위젯 관측치도 실어둠).
+      const observedFingers = {
+        thumb: isFingerExtended(lm, 'thumb'),
+        index: isFingerExtended(lm, 'index'),
+        middle: isFingerExtended(lm, 'middle'),
+        ring: isFingerExtended(lm, 'ring'),
+        pinky: isFingerExtended(lm, 'pinky'),
+      };
       let buf = handEvidenceRef.current[idx];
       if (!buf || buf.type !== inst.type) {
-        buf = { type: inst.type, hand: observedHand, completed_at_t: null, frames: [] };
+        buf = {
+          type: inst.type, hand: observedHand, fingers_state: observedFingers,
+          completed_at_t: null, frames: [],
+        };
         handEvidenceRef.current[idx] = buf;
-      } else if (buf.hand == null && observedHand != null) {
-        buf.hand = observedHand; // 첫 프레임 라벨 누락 시 이후 보강
+      } else {
+        if (buf.hand == null && observedHand != null) buf.hand = observedHand;
+        buf.fingers_state = observedFingers; // 최신 관측 손가락 상태
       }
       if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
         buf.frames.push({ t: nowMs, landmarks: extractHandEvidence(lm) });
       }
       lastHandEvidenceAtRef.current = nowMs;
-      // 디버그(fist 임계 캘리브레이션용): gesture=null 이어도 spread/pinch 출력.
-      console.log(
-        `[A3 hand] expect=${inst.type} got=${gesture ?? 'null'} `
-        + `spread=${spread(lm).toFixed(3)} pinch=${pinchRatio(lm).toFixed(3)}`,
-      );
     }
 
     // 제스처 검출 + 연속 유지 (face 게이지와 동형).
-    const detected = gesture === inst.type;
+    // finger_pose 는 단일 제스처(open/fist/pinch)가 아니라 손가락 집합 일치로 판정한다
+    // (detectHandGesture 는 'finger_pose' 를 반환하지 않으므로 fingersMatch 사용).
+    // 서버 _verify_fingers/_fingers_match 와 동일 기준 → 위젯·서버 완료 판정 일치.
+    const detected = inst.type === 'finger_pose'
+      ? fingersMatch(lm, inst.fingers || [])
+      : gesture === inst.type;
     setHandDetected(detected);
     if (detected) {
       if (handProgressStartedAtRef.current == null) {
@@ -695,7 +704,11 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
                   {HAND_ICON_FOR[currentHandInstruction.type] ?? '✋'}
                 </span>
                 <span className="text-white font-bold text-sm">
-                  {HAND_SIDE_LABELS[currentHandInstruction.hand] ?? '손'}: {currentHandInstruction.label}
+                  {HAND_SIDE_LABELS[currentHandInstruction.hand] ?? '손'}: {
+                    currentHandInstruction.fingers?.length
+                      ? `${currentHandInstruction.fingers.map((f) => FINGER_KO[f] ?? f).join('+')} 펴기`
+                      : currentHandInstruction.label
+                  }
                 </span>
                 <span className="text-white/60 text-xs">
                   {handDetected ? '감지됨 ✓' : `(${currentHandInstruction.duration_sec}s)`}

@@ -240,6 +240,7 @@ class HandInstructionType(str, Enum):
     OPEN_HAND = "open_hand"
     FIST = "fist"
     PINCH = "pinch"
+    FINGER_POSE = "finger_pose"  # 손가락 지정 포즈(검지만/V 등). 제스처(spread/pinch) 무검증, fingers 로 판정.
 
 
 # 사용자에게 보일 한국어 라벨 (FACE_INSTRUCTION_LABELS 와 동형).
@@ -247,6 +248,11 @@ HAND_INSTRUCTION_LABELS: dict[HandInstructionType, str] = {
     HandInstructionType.OPEN_HAND: "손 펴기",
     HandInstructionType.FIST: "주먹 쥐기",
     HandInstructionType.PINCH: "엄지-검지 붙이기",
+}
+
+# A3 손가락 한국어 이름 (finger_pose 미션 라벨 생성용). 위젯 FINGER_KO 와 동일 의미.
+FINGER_NAMES_KO: dict[str, str] = {
+    "thumb": "엄지", "index": "검지", "middle": "중지", "ring": "약지", "pinky": "새끼",
 }
 
 
@@ -257,6 +263,9 @@ class HandInstruction(BaseModel):
     duration_sec: int = Field(..., gt=0, le=10)
     # A3 좌우: 기대 손 ("left" | "right"). None = 좌우 무관(기존 3종 동작 유지). backcompat.
     hand: str | None = None
+    # A3 손가락: 펴야 할 손가락 목록(["index"]=검지만, ["index","middle"]=V).
+    # None = 손가락 무관(기존 open/fist/pinch 유지). backcompat.
+    fingers: list[str] | None = None
 
 
 class FaceChallengeSpec(ChallengeSpecBase):
@@ -289,6 +298,9 @@ class FaceChallengeAnswer(BaseModel):
     # A3 좌우: 각 hand instruction 의 기대 손 ("left"|"right"|None). None=손 무관.
     # expected_hand_instruction_types 와 index 정렬. 빈 리스트/None 이면 좌우 미검증(backcompat).
     expected_hand_sides: list[str | None] = Field(default_factory=list)
+    # A3 손가락: 각 hand instruction 의 펴야 할 손가락 목록(또는 None=무관). index 정렬.
+    # 빈 리스트/None 이면 손가락 미검증(backcompat).
+    expected_fingers: list[list[str] | None] = Field(default_factory=list)
     tolerance_sec: float = Field(
         default=1.0, gt=0.0, le=10.0,
         description="각 지시 수행 시간 허용 오차 (MediaPipe 합류 후 실제 사용)."

@@ -75,6 +75,58 @@ export function toUserHand(label) {
   return null;
 }
 
+// 손가락별 (MCP, PIP, DIP, TIP) 인덱스. MediaPipe Hands 21점 표준. 엄지=1,2,3,4(CMC,MCP,IP,TIP).
+// ★ 서버 hand_evidence.py 의 FINGER_LANDMARKS 와 동일(단일 출처).
+const FINGER_LANDMARKS = {
+  thumb: [1, 2, 3, 4],
+  index: [5, 6, 7, 8],
+  middle: [9, 10, 11, 12],
+  ring: [13, 14, 15, 16],
+  pinky: [17, 18, 19, 20],
+};
+// 폄 비율 임계 — 서버 hand_evidence.py 와 동일(단일 출처). TODO 실측 calibration.
+export const FINGER_EXTEND_RATIO = 1.5;
+export const THUMB_EXTEND_RATIO = 1.5;
+
+/**
+ * 손가락 폄 판정 (서버 hand_evidence._is_finger_extended 와 1:1 동일 로직).
+ * dist(TIP,MCP) > RATIO * dist(PIP,MCP) → 폄. 미지원/누락/0분모 → false.
+ * 엄지는 기하 특수라 THUMB_EXTEND_RATIO 분리. open/fist/pinch 와 무관(손가락 지정용).
+ * @param {Array<{x:number,y:number,z:number}>} lm 21점 랜드마크 배열
+ * @param {('thumb'|'index'|'middle'|'ring'|'pinky')} finger
+ */
+export function isFingerExtended(lm, finger) {
+  const idx = FINGER_LANDMARKS[finger];
+  if (!idx || !lm) return false;
+  const [mcp, pip, , tip] = idx;
+  const pMcp = lm[mcp];
+  const pPip = lm[pip];
+  const pTip = lm[tip];
+  if (!pMcp || !pPip || !pTip) return false;
+  const base = dist2D(pPip, pMcp);
+  if (base < 1e-6) return false;
+  const ratio = dist2D(pTip, pMcp) / base;
+  const th = finger === 'thumb' ? THUMB_EXTEND_RATIO : FINGER_EXTEND_RATIO;
+  return ratio > th;
+}
+
+/**
+ * 이 프레임의 '펴진 손가락 집합'이 expected 와 일치하는가.
+ * ★ 서버 hand_evidence._fingers_match 와 1:1 동일 로직(단일 출처) — finger_pose 미션의
+ *   위젯 완료 판정과 서버 검증을 동일하게 맞춘다.
+ *   · 4지(index/middle/ring/pinky): 정확 일치(expected 외 손가락이 펴지면 불일치=차단).
+ *   · 엄지(thumb): 검출 불안정하므로 expected 에 있을 때만 검사, 없으면 무시.
+ * @param {Array<{x:number,y:number,z:number}>} lm 21점 랜드마크 배열
+ * @param {string[]} expected 펴야 할 손가락 이름 배열(예: ['index'] 검지만, ['index','middle'] V)
+ */
+export function fingersMatch(lm, expected) {
+  const exp = new Set(expected || []);
+  const four = ['index', 'middle', 'ring', 'pinky'];
+  const fourOk = four.every((f) => isFingerExtended(lm, f) === exp.has(f));
+  const thumbOk = exp.has('thumb') ? isFingerExtended(lm, 'thumb') : true;
+  return fourOk && thumbOk;
+}
+
 /**
  * 한 프레임의 normalized hand landmark 21점을 { [idx]: [x, y] } 로 추출.
  * - 좌표는 raw 정규화(0~1) 무변환, 소수 5자리 반올림 (extractEvidence 와 동형).

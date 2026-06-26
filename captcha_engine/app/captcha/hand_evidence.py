@@ -66,6 +66,7 @@ class HandEvidenceInstruction(BaseModel):
     type: str
     completed_at_t: int | None = None
     hand: str | None = None  # A3 좌우: 위젯이 관측한 사용자 손 ("left"|"right"|None)
+    fingers_state: dict | None = None  # A3 손가락: 위젯 관측 폄 상태({finger:bool}). 검증은 frames 재계산.
     frames: list[HandEvidenceFrame] = Field(default_factory=list)
 
 
@@ -134,13 +135,51 @@ def _pinch_ratio(lm: dict[str, list[float]]) -> float | None:
     return _dist(p4, p8) / size
 
 
-def _is_finger_extended(lm: dict[str, list[float]], finger: str) -> bool:
-    """손가락별 펴짐 판정 스텁 — 향후 PINKY_ONLY 등 손가락 지정 제스처용 자리.
-    open/fist/pinch 검증은 이 함수를 쓰지 않는다.
+# 손가락별 (MCP, PIP, DIP, TIP) 랜드마크 인덱스. MediaPipe Hands 21점 표준.
+# 엄지는 (CMC, MCP, IP, TIP)=1,2,3,4 — 마디 이름은 다르나 동일 4점 규약으로 다룬다.
+# ★ 위젯 handDetection.js 의 FINGER_LANDMARKS 와 동일해야 한다(단일 출처).
+FINGER_LANDMARKS: dict[str, tuple[int, int, int, int]] = {
+    "thumb": (1, 2, 3, 4),
+    "index": (5, 6, 7, 8),
+    "middle": (9, 10, 11, 12),
+    "ring": (13, 14, 15, 16),
+    "pinky": (17, 18, 19, 20),
+}
 
-    TODO(A3+): MediaPipe Hands 의 각 손가락 tip/pip/mcp 인덱스로 펴짐을 판정.
+# 폄 판정 비율: dist(TIP, MCP) > RATIO * dist(PIP, MCP) → 폄.
+# TODO(실측 calibration): 추정 기본값. [fingers] 로그로 실제 분포 확인 후 확정.
+# 엄지는 기하가 달라(아래 docstring 분석) 별도 임계로 분리해 둔다.
+FINGER_EXTEND_RATIO = 1.5
+THUMB_EXTEND_RATIO = 1.5
+
+
+def _is_finger_extended(lm: dict[str, list[float]], finger: str) -> bool:
+    """손가락 폄 판정. dist(TIP, MCP) > RATIO * dist(PIP, MCP) 이면 폄.
+    펴면 TIP 이 MCP 에서 멀어지고(비율 큼), 접으면 TIP 이 손바닥쪽으로 말려 가까워진다.
+
+    finger ∈ {thumb, index, middle, ring, pinky}. 미지원/랜드마크 누락/0분모 → False(fail-closed).
+    open/fist/pinch 검증은 이 함수를 쓰지 않는다(손가락 지정 제스처 2b 용).
+
+    ⚠️ 엄지 특수성: (1,2,3,4) 규약에선 "MCP"=1=CMC 라 base(dist(PIP=2, MCP=1))가
+    짧아 비율이 과대평가될 수 있다(접어도 폄으로 읽힐 위험). 그래서 THUMB_EXTEND_RATIO 를
+    별도로 두어 calibration 시 상향 가능하게 했다. 정밀하게는 tip↔다른 손가락 MCP 거리나
+    MCP 각도가 더 안정적이다(2b calibration 후 교체 여지).
     """
-    raise NotImplementedError("finger-level extension not implemented yet (A3+ 확장 자리)")
+    idx = FINGER_LANDMARKS.get(finger)
+    if idx is None:
+        return False
+    mcp_i, pip_i, _dip_i, tip_i = idx
+    p_mcp = _pt(lm, mcp_i)
+    p_pip = _pt(lm, pip_i)
+    p_tip = _pt(lm, tip_i)
+    if p_mcp is None or p_pip is None or p_tip is None:
+        return False
+    base = _dist(p_pip, p_mcp)
+    if base < 1e-6:
+        return False
+    ratio = _dist(p_tip, p_mcp) / base
+    threshold = THUMB_EXTEND_RATIO if finger == "thumb" else FINGER_EXTEND_RATIO
+    return ratio > threshold
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +232,51 @@ def _verify_pinch(frames: list[HandEvidenceFrame], window: Window) -> bool:
     return any(_in_window(t, window) and r < PINCH_TH for (t, r) in series)
 
 
+# 손가락 지정 제스처 검증 파라미터.
+FOUR_FINGERS = ("index", "middle", "ring", "pinky")
+FINGER_MATCH_FRAMES = 3  # window 안에 expected 와 일치하는 폄 상태 프레임이 최소 이만큼(깜빡임 방지)
+
+
+def _fingers_match(lm: dict[str, list[float]], expected: set[str]) -> bool:
+    """이 한 프레임의 '펴진 손가락 집합'이 expected 와 일치하는가.
+    위젯 handDetection.js 의 fingersMatch 와 동일 로직(단일 출처).
+
+    - 4지(index/middle/ring/pinky): **정확 일치** — expected 에 있으면 폄, 없으면 접힘.
+      (expected 외 손가락이 펴져 있으면 불일치 → 차단. "검지만"에서 다펴기/여분 폄 차단.)
+    - 엄지(thumb): 검출 불안정(주먹에도 thumb=true 관측됨)하므로 **expected 에 있을 때만**
+      폄을 요구하고, 없으면 무시한다 → 엄지 무관 미션이 엄지 깜빡임에 안 걸린다.
+    """
+    four_ok = all(_is_finger_extended(lm, fin) == (fin in expected) for fin in FOUR_FINGERS)
+    thumb_ok = _is_finger_extended(lm, "thumb") if "thumb" in expected else True
+    return four_ok and thumb_ok
+
+
+def _verify_fingers(
+    frames: list[HandEvidenceFrame],
+    expected_fingers: list[str],
+    window: Window,
+) -> bool:
+    """window 안에, 펴진 손가락 집합이 expected 와 일치하는 프레임이 FINGER_MATCH_FRAMES 개
+    이상 존재하면 통과(존재 검증, 과도기 깜빡임 방지).
+    landmarks 에서 _is_finger_extended 로 **재계산**한다(위젯 fingers_state echo 불신).
+    """
+    expected = set(expected_fingers)
+    valid = 0
+    matches = 0
+    for f in frames:
+        if not _in_window(f.t, window):
+            continue
+        lm = f.landmarks
+        if _hand_size(lm) is None:
+            continue  # 손 기준점 없는 프레임은 무효
+        valid += 1
+        if _fingers_match(lm, expected):
+            matches += 1
+    if valid < MIN_VALID_FRAMES:
+        return False
+    return matches >= FINGER_MATCH_FRAMES
+
+
 def _verify_instruction(inst: HandEvidenceInstruction, window: Window) -> bool:
     """instruction.type 별 제스처 검증 디스패치. 미지원 타입 → False(fail-closed)."""
     t = inst.type
@@ -202,6 +286,10 @@ def _verify_instruction(inst: HandEvidenceInstruction, window: Window) -> bool:
         return _verify_fist(inst.frames, window)
     if t == "pinch":
         return _verify_pinch(inst.frames, window)
+    if t == "finger_pose":
+        # 손가락 전용 type — 제스처(spread/pinch) 검증 면제. 실제 손가락 판정은
+        # check_hand_evidence 의 _verify_fingers(expected_fingers) 가 담당한다.
+        return True
     return False
 
 
@@ -244,6 +332,8 @@ def check_hand_evidence(
         # A3 좌우: 발급이 기대 손을 지정한 경우(None 아님) 관측 hand 와 대조.
         # expected_hand_sides 가 비었거나(구버전) 해당 항목이 None 이면 손 무관(기존 동작).
         expected_sides = list(getattr(answer, "expected_hand_sides", None) or [])
+        # A3 손가락: 발급이 손가락을 지정한 경우(None/빈 아님) frames 재계산으로 검증.
+        expected_fingers = list(getattr(answer, "expected_fingers", None) or [])
 
         tol_ms = int(answer.tolerance_sec * 1000)
         for i, inst in enumerate(insts):
@@ -255,6 +345,13 @@ def check_hand_evidence(
             window: Window = (inst.completed_at_t - tol_ms, inst.completed_at_t + tol_ms)
             if not _verify_instruction(inst, window):
                 return False
+            exp_fingers = expected_fingers[i] if i < len(expected_fingers) else None
+            # finger_pose 는 손가락 검증이 본체 — fingers 미지정이면 무의미하므로 차단(fail-closed).
+            if inst.type == "finger_pose" and not exp_fingers:
+                return False
+            if exp_fingers:  # None/빈 리스트 → 손가락 무관(backcompat)
+                if not _verify_fingers(inst.frames, exp_fingers, window):
+                    return False
         return True
     except Exception:
         logger.warning("check_hand_evidence fail-closed (parse/verify error)", exc_info=True)
