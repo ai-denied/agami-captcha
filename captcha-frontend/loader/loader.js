@@ -365,6 +365,7 @@ function onMessage(event) {
   switch (data.type) {
     case 'agami-result':
       if (data.success) {
+        // [성공 시 로직] 창 닫고 검증 중 UI 띄우기
         removeIframe(w);
         if (w.triggerBtn) w.triggerBtn.style.display = 'none';
 
@@ -400,17 +401,12 @@ function onMessage(event) {
         }, 1500);
         
       } else {
-        // [핵심 조치] 실패 시 모달 창을 없애고 호스트 페이지 영역에 실패 UI와 다시하기 버튼 표시
-        w.token = '';
-        setHidden(w, '');
-        if (w.errorCallback) {
-          try { w.errorCallback(data); } catch (e) { warn('errorCallback 예외: ' + e); }
-        }
+        removeIframe(w);
         
-        removeIframe(w); 
         if (w.triggerBtn) w.triggerBtn.style.display = 'none'; 
         
-        var errMsg = (data.error && data.error.message) ? data.error.message : '알 수 없는 오류가 발생했습니다.';
+        var errMsg = (data.error && data.error.message) ? data.error.message : '확인에 실패했습니다.';
+        
         showFailed(w, errMsg); 
         
         w.phase = 'failed';
@@ -476,35 +472,31 @@ if (document.readyState === 'loading') {
   startAuto();
 }
 
+// loader.js 파일 끝부분 api 정의 바로 위에 붙여넣으세요
 if (typeof window !== 'undefined') {
   var lastWidth = window.innerWidth;
-  var lastHeight = window.innerHeight;
-
+  
   window.addEventListener('resize', function() {
     var nw = window.innerWidth;
-    var nh = window.innerHeight;
-
-    // 모바일(800px 이하)에서는 주소창 변화 등을 무시
+    
+    // 모바일에서는 주소창 변화 등 오작동이 많으므로 800px 이하 무시
     if (nw <= 800 || lastWidth <= 800) {
       lastWidth = nw;
-      lastHeight = nh;
       return;
     }
 
-    var ratioW = Math.abs(nw - lastWidth) / lastWidth;
-    var ratioH = Math.abs(nh - lastHeight) / lastHeight;
-
-    // 30% 이상 급격한 변화 시 개발자 도구로 간주하여 캡차 강제 종료
-    if (ratioW > 0.3 || ratioH > 0.3) {
+    // 30% 이상 급격한 변화 시 (개발자 도구 등)
+    if (Math.abs(nw - lastWidth) / lastWidth > 0.3) {
       for (var id in widgets) {
-        if (widgets[id].overlay) {
-          api.reset(widgets[id].id); // 캡차 창만 닫고 밴은 안 시킴
-          warn('비정상적인 화면 비율 변경이 감지되었습니다.');
+        var w = widgets[id];
+        if (w.overlay) {
+          // 밴 카운트 올리지 않고 창만 닫음
+          api.reset(w.id);
+          warn('비정상적인 화면 변경이 감지되었습니다.');
         }
       }
     }
     lastWidth = nw;
-    lastHeight = nh;
   });
 }
 
@@ -532,7 +524,7 @@ var api = {
       removeIframe(w); 
       removeVerified(w);
       if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; } 
-      if (w.triggerBtn) w.triggerBtn.style.display = ''; 
+      if (w.triggerBtn) w.triggerBtn.style.display = 'flex'; 
       w.phase = 'idle';
       setStatus(w, '초기화되었습니다');
     } catch (e) {
