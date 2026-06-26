@@ -25,7 +25,12 @@ export default function EmbedEntry() {
   const kind = ALLOWED_KINDS.includes(rawKind) ? rawKind : 'flashlight';
   const rawDiff = (searchParams.get('difficulty') ?? 'easy').toLowerCase();
   const difficulty = DIFFICULTY_MAP[rawDiff] ?? 'easy';
-
+  
+  const theme = searchParams.get('theme') || 'light';
+  const isDark = theme === 'dark';
+  const bgColor = isDark ? 'bg-[#1a1a1b]' : 'bg-white';
+  const textColor = isDark ? 'text-white' : 'text-[#1d2a44]';
+  
   const rawClientKey = searchParams.get('client_key'); 
   const clientKeyProvided = rawClientKey !== null;
   const clientKeyFormatInvalid = clientKeyProvided && !isValidClientKeyFormat(rawClientKey);
@@ -155,16 +160,18 @@ export default function EmbedEntry() {
 
   return (
     <div ref={rootRef} className={rootClass}>
-      <div className="w-full max-w-5xl">
+      <div className={`w-full max-w-5xl ${isDark ? 'dark' : ''}`}>
         {(status === 'idle' || status === 'loading') && (
-          <div className={`mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl bg-white ${cardEdge}`}>
-            <div className="flex items-center gap-3 text-[#6b7891]">
+          // 로딩창도 테마 적용
+          <div className={`mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl ${bgColor} ${cardEdge}`}>
+            <div className={`flex items-center gap-3 ${isDark ? 'text-gray-400' : 'text-[#6b7891]'}`}>
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#e0e7f3] border-t-[#4a8bff]" />
               <span className="text-sm font-medium">챌린지를 발급받는 중…</span>
             </div>
           </div>
         )}
 
+        {/* CaptchaRouter 등 하위 컴포넌트에도 props로 isDark를 넘겨주어 내부 색상도 바꿀 수 있게 합니다 */}
         {status === 'active' && spec && (
           <CaptchaRouter
             kind={kind}
@@ -174,11 +181,12 @@ export default function EmbedEntry() {
             onSubmit={submit}
             onRefresh={start}
             embedded={isEmbedded}
+            theme={theme} 
           />
         )}
 
         {status === 'success' && (
-          <div className={`mx-auto w-full max-w-[640px] rounded-3xl bg-white p-8 ${cardEdge}`}>
+          <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-2xl">✅</div>
               <div>
