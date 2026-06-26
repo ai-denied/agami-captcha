@@ -85,7 +85,7 @@ export function useCaptcha({ kind = 'flashlight', difficulty = null, clientKey }
       const res = await submitAnswer(spec.challenge_id, enriched, clientKey);
       if (res.ok) {
         if (res.data?.decision === 'block') {
-          handleFail({ code: 'verification_failed', message: '행동 분석 결과 사람으로 인증되지 않았습니다.' });
+          handleFail({ code: 'verification_failed', message: '인증에 실패했습니다.' });
         } else {
           localStorage.removeItem('agami_fail_count');
           setToken(res.data.captcha_token);
