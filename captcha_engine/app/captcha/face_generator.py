@@ -126,11 +126,14 @@ def generate_face_challenge(
             f"손동작 카탈로그({len(hand_pool)}) 보다 많은 손동작({hand_count})을 요청함."
         )
     chosen_hand: list[HandInstructionType] = rng.sample(hand_pool, k=hand_count)
+    # A3 side 발급 ON: 각 손동작에 좌우를 매번 지정한다("왼손 주먹" 류). rng 는 위 face
+    # 와 동일 secrets.SystemRandom. side 끄려면 hand=None 으로 두면 됨(좌우 무검증).
     hand_instructions = [
         HandInstruction(
             type=t,
             label=HAND_INSTRUCTION_LABELS[t],
             duration_sec=duration,
+            hand=rng.choice(["left", "right"]),
         )
         for t in chosen_hand
     ]
@@ -154,6 +157,10 @@ def generate_face_challenge(
         challenge_id=challenge_id,
         expected_instruction_types=[t.value for t in chosen],
         expected_hand_instruction_types=list(chosen_hand),
+        # 각 hand instruction 의 기대 손("left"/"right"). 위 hand=rng.choice 로 side 발급
+        # ON 이라 HandInstruction.hand 에서 자동으로 흐른다. hand=None 이면 None 으로 흘러
+        # 좌우 미검증(backcompat).
+        expected_hand_sides=[hi.hand for hi in hand_instructions],
         tolerance_sec=profile["tolerance_sec"],
         created_at=now,
         expires_at=expires_at,

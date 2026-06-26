@@ -255,6 +255,8 @@ class HandInstruction(BaseModel):
     type: HandInstructionType
     label: str
     duration_sec: int = Field(..., gt=0, le=10)
+    # A3 좌우: 기대 손 ("left" | "right"). None = 좌우 무관(기존 3종 동작 유지). backcompat.
+    hand: str | None = None
 
 
 class FaceChallengeSpec(ChallengeSpecBase):
@@ -284,6 +286,9 @@ class FaceChallengeAnswer(BaseModel):
     )
     # A3: 손동작 정답 시퀀스(병렬). 기본 빈 리스트 — hand 없는 챌린지 하위호환.
     expected_hand_instruction_types: list[HandInstructionType] = Field(default_factory=list)
+    # A3 좌우: 각 hand instruction 의 기대 손 ("left"|"right"|None). None=손 무관.
+    # expected_hand_instruction_types 와 index 정렬. 빈 리스트/None 이면 좌우 미검증(backcompat).
+    expected_hand_sides: list[str | None] = Field(default_factory=list)
     tolerance_sec: float = Field(
         default=1.0, gt=0.0, le=10.0,
         description="각 지시 수행 시간 허용 오차 (MediaPipe 합류 후 실제 사용)."

@@ -65,6 +65,7 @@ class HandEvidenceInstruction(BaseModel):
     model_config = ConfigDict(extra="ignore")
     type: str
     completed_at_t: int | None = None
+    hand: str | None = None  # A3 좌우: 위젯이 관측한 사용자 손 ("left"|"right"|None)
     frames: list[HandEvidenceFrame] = Field(default_factory=list)
 
 
@@ -240,9 +241,16 @@ def check_hand_evidence(
         if [i.type for i in insts] != expected_values:
             return False
 
+        # A3 좌우: 발급이 기대 손을 지정한 경우(None 아님) 관측 hand 와 대조.
+        # expected_hand_sides 가 비었거나(구버전) 해당 항목이 None 이면 손 무관(기존 동작).
+        expected_sides = list(getattr(answer, "expected_hand_sides", None) or [])
+
         tol_ms = int(answer.tolerance_sec * 1000)
-        for inst in insts:
+        for i, inst in enumerate(insts):
             if inst.completed_at_t is None:
+                return False
+            exp_side = expected_sides[i] if i < len(expected_sides) else None
+            if exp_side is not None and inst.hand != exp_side:
                 return False
             window: Window = (inst.completed_at_t - tol_ms, inst.completed_at_t + tol_ms)
             if not _verify_instruction(inst, window):

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { detectInstruction, extractEvidence } from '../lib/faceDetection';
-import { detectHandGesture, extractHandEvidence, spread, pinchRatio } from '../lib/handDetection';
+import { detectHandGesture, extractHandEvidence, spread, pinchRatio, toUserHand } from '../lib/handDetection';
 import FishTimer from './FishTimer';
 
 // =============================================================================
@@ -110,6 +110,9 @@ const HAND_ICON_FOR = {
   fist: '✊',
   pinch: '🤏',
 };
+
+// A3 좌우: 사용자 손 라벨. hand 미지정(None)이면 "손"(좌우 무관, backcompat).
+const HAND_SIDE_LABELS = { left: '왼손', right: '오른손' };
 
 const COLOR_BLUE = '#4a8bff';
 const COLOR_YELLOW = '#fbbf24';
@@ -398,6 +401,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             .filter(Boolean)
             .map((b) => ({
               type: b.type,
+              hand: b.hand ?? null,
               completed_at_t: b.completed_at_t ?? null,
               frames: b.frames,
             })),
@@ -431,13 +435,22 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       return;
     }
 
-    const lm = results.multiHandLandmarks?.[0];
+    // A3 좌우: 기대 손(inst.hand)이 지정되면 그 손을 고르고, 없으면 첫 손([0], 기존 동작).
+    const handLms = results.multiHandLandmarks || [];
+    const handedness = results.multiHandedness || [];
+    const expectedSide = inst.hand ?? null; // "left"|"right"|null(좌우 무관)
+    let pickIdx = 0;
+    if (expectedSide) {
+      pickIdx = handLms.findIndex((_, i) => toUserHand(handedness[i]?.label) === expectedSide);
+    }
+    const lm = pickIdx >= 0 ? handLms[pickIdx] : undefined;
     if (!lm) {
-      // 손 미검출 → 진행 리셋 (face no_face 와 동형)
+      // 손 미검출(또는 기대 side 손 없음) → 진행 리셋 (face no_face 와 동형)
       handProgressStartedAtRef.current = null;
       setHandDetected(false);
       return;
     }
+    const observedHand = toUserHand(handedness[pickIdx]?.label); // 관측된 사용자 손
 
     // 원시 hand 랜드마크 증거 기록 (face evidence 와 동형, 15fps 다운샘플).
     const nowMs = Date.now();
@@ -445,8 +458,10 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     if (nowMs - lastHandEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
       let buf = handEvidenceRef.current[idx];
       if (!buf || buf.type !== inst.type) {
-        buf = { type: inst.type, completed_at_t: null, frames: [] };
+        buf = { type: inst.type, hand: observedHand, completed_at_t: null, frames: [] };
         handEvidenceRef.current[idx] = buf;
+      } else if (buf.hand == null && observedHand != null) {
+        buf.hand = observedHand; // 첫 프레임 라벨 누락 시 이후 보강
       }
       if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
         buf.frames.push({ t: nowMs, landmarks: extractHandEvidence(lm) });
@@ -680,7 +695,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
                   {HAND_ICON_FOR[currentHandInstruction.type] ?? '✋'}
                 </span>
                 <span className="text-white font-bold text-sm">
-                  손: {currentHandInstruction.label}
+                  {HAND_SIDE_LABELS[currentHandInstruction.hand] ?? '손'}: {currentHandInstruction.label}
                 </span>
                 <span className="text-white/60 text-xs">
                   {handDetected ? '감지됨 ✓' : `(${currentHandInstruction.duration_sec}s)`}

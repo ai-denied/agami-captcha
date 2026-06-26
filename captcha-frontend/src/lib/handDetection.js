@@ -64,6 +64,18 @@ export function detectHandGesture(lm) {
 }
 
 /**
+ * MediaPipe handedness 라벨 → 사용자 관점 손('left'|'right'|null).
+ * 영상이 CSS scaleX(-1) 거울이라 MediaPipe 라벨이 반전된다(로컬 실측 확정):
+ *   'Left'  = 사용자 오른손('right'),  'Right' = 사용자 왼손('left').
+ * 라벨이 없으면(undefined/null) null.
+ */
+export function toUserHand(label) {
+  if (label === 'Left') return 'right';
+  if (label === 'Right') return 'left';
+  return null;
+}
+
+/**
  * 한 프레임의 normalized hand landmark 21점을 { [idx]: [x, y] } 로 추출.
  * - 좌표는 raw 정규화(0~1) 무변환, 소수 5자리 반올림 (extractEvidence 와 동형).
  * - z 는 서버 기하가 2D 만 쓰므로 제외. 없는 점은 생략.
