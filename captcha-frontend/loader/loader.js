@@ -499,7 +499,7 @@ var api = {
       removeIframe(w); 
       removeVerified(w);
       if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; } 
-      if (w.triggerBtn) w.triggerBtn.style.display = 'flex'; 
+      if (w.triggerBtn) w.triggerBtn.style.display = ''; 
       w.phase = 'idle';
       setStatus(w, '초기화되었습니다');
     } catch (e) {
