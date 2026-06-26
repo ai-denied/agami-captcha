@@ -93,13 +93,21 @@ function buildSrc(kind, sitekey, wid, theme) {
   return EMBED_BASE + '?' + parts.join('&');
 }
 
+// [핵심 조치] 텍스트 대신 물고기가 중심에 있고 테두리가 도는 애니메이션 스피너 생성
 function makeSpinner() {
   var s = document.createElement('div');
   s.setAttribute('data-agami-loading', '1');
-  s.style.cssText =
-    'display:flex;align-items:center;justify-content:center;min-height:90px;' +
-    'font:13px/1.4 system-ui,-apple-system,sans-serif;color:#6b7891;';
-  s.textContent = '캡차 로딩 중…';
+  s.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  
+  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
+  var fishImg = '<img src="' + fishSrc + '" style="width:30px;height:30px;position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);object-fit:contain;" alt="로딩물고기" onerror="this.outerHTML=\'🐟\'" />';
+  
+  s.innerHTML = 
+    '<div style="position:relative;width:64px;height:64px;">' +
+      '<style>@keyframes agami-spin { 100% { transform: rotate(360deg); } }</style>' +
+      '<div style="position:absolute;inset:0;border:3px solid rgba(91,139,247,0.2);border-top-color:#5B8BF7;border-radius:50%;animation:agami-spin 1s linear infinite;"></div>' +
+      fishImg +
+    '</div>';
   return s;
 }
 
@@ -365,40 +373,17 @@ function onMessage(event) {
   switch (data.type) {
     case 'agami-result':
       if (data.success) {
-        // [성공 시 로직] 창 닫고 검증 중 UI 띄우기
         removeIframe(w);
         if (w.triggerBtn) w.triggerBtn.style.display = 'none';
-
-        var verifyingUi = document.createElement('div');
-        var dark = w.theme === 'dark';
-        verifyingUi.style.cssText =
-          'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
-          'min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' +
-          (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #e3e6ec;');
         
-        var spinnerColor = dark ? '#8FB2FF' : '#5B8BF7';
-        var textColor = dark ? '#fff' : '#2c313b';
-        verifyingUi.innerHTML =
-          '<span style="width:38px;height:38px;display:flex;align-items:center;justify-content:center;flex:none;">' +
-            '<style>@keyframes agami-spin { to { transform: rotate(360deg); } }</style>' +
-            '<span style="display:block;width:20px;height:20px;border:3px solid ' + (dark ? 'rgba(143,178,255,0.2)' : 'rgba(91,139,247,0.2)') + ';border-top-color:' + spinnerColor + ';border-radius:50%;animation:agami-spin 1s linear infinite;"></span>' +
-          '</span>' +
-          '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + textColor + ';">안전한 환경인지 검증 중...</span>';
-        
-        w.div.appendChild(verifyingUi);
-        setStatus(w, '검증을 진행 중입니다');
-
-        setTimeout(function() {
-          removeEl(verifyingUi); 
-          w.token = data.captchaToken || '';
-          setHidden(w, w.token);
-          if (w.callback) {
-            try { w.callback(w.token); } catch (e) { warn('callback 예외: ' + e); }
-          }
-          showVerified(w);
-          w.phase = 'verified';
-          setStatus(w, '확인되었습니다');
-        }, 1500);
+        w.token = data.captchaToken || '';
+        setHidden(w, w.token);
+        if (w.callback) {
+          try { w.callback(w.token); } catch (e) { warn('callback 예외: ' + e); }
+        }
+        showVerified(w);
+        w.phase = 'verified';
+        setStatus(w, '확인되었습니다');
         
       } else {
         removeIframe(w);
@@ -472,7 +457,7 @@ if (document.readyState === 'loading') {
   startAuto();
 }
 
-// loader.js 파일 끝부분 api 정의 바로 위에 붙여넣으세요
+// [최종 수정] 부모 창에서 개발자 도구 및 화면 비율 감지
 if (typeof window !== 'undefined') {
   var lastWidth = window.innerWidth;
   var lastHeight = window.innerHeight;
@@ -498,7 +483,7 @@ if (typeof window !== 'undefined') {
           removeIframe(w); 
           if (w.triggerBtn) w.triggerBtn.style.display = 'none'; 
           
-          var errMsg = '보안을 위해 화면 비율 변경이 감지되었습니다.';
+          var errMsg = '비정상적인 움직임이 감지되었습니다.';
           showFailed(w, errMsg); // 실패 UI 출력
           
           w.phase = 'failed';
