@@ -161,7 +161,10 @@ function makeSpinner() {
 
 function clearSpinner(w) {
   if (w.readyTimer) { clearTimeout(w.readyTimer); w.readyTimer = null; }
-  var s = w.div.querySelector('[data-agami-loading]');
+  
+  var searchRoot = w.overlay ? w.overlay : w.div;
+  var s = searchRoot.querySelector('[data-agami-loading]');
+  
   if (s && s.parentNode) s.parentNode.removeChild(s);
 }
 
@@ -335,7 +338,7 @@ function mountIframe(w) {
   overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
 
   var modalBox = document.createElement('div');
-  modalBox.style.cssText = 'width:100%;max-width:400px;background:' + (w.theme === 'dark' ? '#1a1a1b' : '#fff') + ';border-radius:12px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.2);';
+  modalBox.style.cssText = 'width:90%;max-width:500px;background:' + (w.theme === 'dark' ? '#1a1a1b' : '#fff') + ';border-radius:12px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.2);';
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
