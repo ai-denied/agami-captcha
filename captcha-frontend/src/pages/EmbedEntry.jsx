@@ -5,8 +5,8 @@ import CaptchaRouter from '../components/CaptchaRouter';
 import { postToParent, resolveTargetOrigin } from '../embed/parentMessaging';
 
 const ALLOWED_KINDS = ['flashlight', 'face_mission', 'context_inference'];
-
 const CLIENT_KEY_PREFIXES = ['agami_site_', 'ck_'];
+
 function isValidClientKeyFormat(value) {
   if (typeof value !== 'string' || value.length === 0) return false;
   return CLIENT_KEY_PREFIXES.some((p) => value.startsWith(p));
@@ -33,17 +33,15 @@ export default function EmbedEntry() {
 
   const { status, spec, token, error, start, submit } = useCaptcha({ kind, difficulty, clientKey });
 
-  // [핵심 조치] 실시간 다크모드 감지 및 상태 동기화
   const themeParam = searchParams.get('theme') || 'auto';
   const [isDark, setIsDark] = useState(() => {
     if (themeParam === 'dark') return true;
     if (themeParam === 'light') return false;
-    // auto일 경우 현재 시스템 설정 감지
     return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
   useEffect(() => {
-    if (themeParam !== 'auto') return; // 명시적으로 지정된 경우 시스템 변경 무시
+    if (themeParam !== 'auto') return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e) => setIsDark(e.matches);
     mq.addEventListener?.('change', handler);
@@ -164,7 +162,6 @@ export default function EmbedEntry() {
               <div className={`text-lg font-bold ${textColor}`}>잘못된 사이트 키</div>
               <div className="text-xs text-[#6b7891]">
                 임베드 URL 의 client_key 형식이 올바르지 않습니다.
-                <span className="text-rose-500 ml-1">(invalid_client_key_format)</span>
               </div>
             </div>
           </div>
@@ -178,6 +175,7 @@ export default function EmbedEntry() {
       
       {/* [스크롤바 방지 및 다크모드 오버라이드 CSS] */}
       <style>{`
+        ::-webkit-scrollbar { display: none; }
         html, body {
           margin: 0 !important;
           padding: 0 !important;
@@ -199,8 +197,11 @@ export default function EmbedEntry() {
       `}</style>
 
       <div className={`w-full max-w-5xl`}>
-        {/* 로딩 영역은 loader.js가 담당하므로 여기서는 렌더링 생략 */}
-        
+        {/* [핵심 조치] loader.js 트리거 버튼의 로딩 효과만 보여주기 위해 React쪽 화면은 비워둠 */}
+        {(status === 'idle' || status === 'loading') && (
+          <div style={{ height: '0px' }}></div>
+        )}
+
         {status === 'active' && spec && (
           <CaptchaRouter
             kind={kind}
@@ -213,7 +214,7 @@ export default function EmbedEntry() {
           />
         )}
 
-        {/* [복구됨] 팀원 연동/테스트를 위한 성공 화면 DOM */}
+        {/* 팀원 연동/테스트를 위한 성공 화면 DOM */}
         {status === 'success' && (
           <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
             <div className="flex items-center gap-3">
@@ -226,7 +227,7 @@ export default function EmbedEntry() {
           </div>
         )}
 
-        {/* [복구됨] 팀원 연동/테스트를 위한 실패 화면 DOM */}
+        {/* 팀원 연동/테스트를 위한 실패 화면 DOM */}
         {status === 'fail' && (
           <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8 ${cardEdge}`}>
             <div className="flex items-center gap-3">
