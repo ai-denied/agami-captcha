@@ -177,18 +177,24 @@ export default function EmbedEntry() {
     <div ref={rootRef} className={rootClass}>
       
       {/* [핵심 조치] 하위 컴포넌트들의 하얀색 하드코딩을 덮어씌워 강제 다크모드화 */}
-      {isDark && (
-        <style>{`
+      <style>{`
+        /* [핵심] 스크롤바 생성 방지 CSS */
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow: hidden !important;
+          height: 100% !important;
+          background: transparent !important;
+        }
+        
+        /* 테마 적용 */
+        ${isDark ? `
           .bg-white { background-color: #1a1a1b !important; }
           .text-\\[\\#1d2a44\\] { color: #f8fafc !important; }
           .text-\\[\\#6b7891\\] { color: #94a3b8 !important; }
-          .text-\\[\\#8a96ad\\] { color: #64748b !important; }
-          .border-\\[\\#e0e7f3\\], .border-\\[1\\.5px\\] { border-color: #334155 !important; }
           .bg-\\[\\#f0f4fb\\] { background-color: #0f172a !important; }
-          .bg-\\[\\#eef4ff\\] { background-color: rgba(74, 139, 255, 0.1) !important; }
-          .border-\\[\\#c8dcff\\] { border-color: rgba(74, 139, 255, 0.2) !important; }
-        `}</style>
-      )}
+        ` : ''}
+      `}</style>
 
       <div className={`w-full max-w-5xl`}>
         {(status === 'idle' || status === 'loading') && (
