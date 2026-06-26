@@ -97,18 +97,17 @@ function makeSpinner(theme) {
   var dark = theme === 'dark';
   var s = document.createElement('div');
   s.setAttribute('data-agami-loading', '1');
-  // 버튼과 동일한 CSS 적용
-  s.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #e3e6ec;');
+  s.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;' + (dark ? 'background:#23262e;color:#fff;' : 'background:#fff;border:1.5px solid #e3e6ec;color:#2c313b;');
   
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
   
   s.innerHTML = 
     '<style>@keyframes agami-spin { 100% { transform: rotate(360deg); } }</style>' +
-    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';position:relative;">' +
-      '<img src="' + fishSrc + '" style="width:22px;height:22px;animation:agami-spin 1.5s linear infinite;" alt="loading" />' +
+    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + iconBg + ';">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;animation:agami-spin 1s linear infinite;" alt="loading" />' +
     '</span>' +
-    '<span style="font:700 16px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 중입니다...</span>';
+    '<span style="font:700 16px system-ui,-apple-system,sans-serif;">검증 중입니다...</span>';
   return s;
 }
 
@@ -184,14 +183,12 @@ function setStatus(w, msg) {
 function makeVerified(theme) {
   var dark = theme === 'dark';
   var v = document.createElement('div');
-  v.setAttribute('class', 'agami-verified');
-  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:0 18px;border-radius:12px;overflow:hidden;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #cdeede;');
   var green = dark ? '#34d399' : '#16a34a';
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
-    '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + green + ';"></span>' +
-    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
-      '<img src="' + fishSrc + '" style="width:22px;height:22px;" alt="success" />' +
+    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(52,211,153,.16)' : 'rgba(22,163,74,.12)') + ';">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;filter:hue-rotate(90deg);" alt="success" />' +
     '</span>' +
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + green + ';">확인됨</span>';
   return v;
@@ -213,26 +210,23 @@ function removeVerified(w) {
 function makeFailed(w, errMsg) {
   var dark = w.theme === 'dark';
   var v = document.createElement('div');
-  v.setAttribute('class', 'agami-failed');
-  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;min-height:60px;padding:8px 18px 8px 16px;border-radius:12px;position:relative;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
+  v.style.cssText = 'display:flex;align-items:center;gap:14px;width:90%;max-width:500px;box-sizing:border-box;min-height:60px;padding:8px 18px;border-radius:12px;' + (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #fecdd3;');
   
   var red = dark ? '#fb7185' : '#e11d48';
   var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
   v.innerHTML =
-    '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:' + red + ';"></span>' +
-    '<span aria-hidden="true" style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
-      '<img src="' + fishSrc + '" style="width:22px;height:22px;" alt="fail" />' +
+    '<span style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:' + (dark ? 'rgba(251,113,133,.16)' : 'rgba(225,29,72,.12)') + ';">' +
+      '<img src="' + fishSrc + '" style="width:22px;height:22px;filter:hue-rotate(280deg);" alt="fail" />' +
     '</span>' +
-    '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:4px 0;">' +
+    '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;">' +
       '<span style="font:700 15px system-ui,-apple-system,sans-serif;color:' + (dark ? '#fff' : '#2c313b') + ';">검증 실패</span>' +
       '<span style="font:12px system-ui,-apple-system,sans-serif;color:' + (dark ? '#a1a1aa' : '#64748b') + ';">' + errMsg + '</span>' +
     '</div>' +
-    '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;transition:opacity 0.2s;white-space:nowrap;flex:none;">다시 시도</button>';
+    '<button type="button" class="agami-retry-btn" style="all:unset;cursor:pointer;background:' + red + ';color:#fff;font:700 13px system-ui,-apple-system,sans-serif;padding:8px 14px;border-radius:8px;flex:none;">다시 시도</button>';
     
   v.querySelector('.agami-retry-btn').onclick = function(e) { e.stopPropagation(); api.reset(w.id); if (w.triggerBtn) w.triggerBtn.click(); };
   return v;
 }
-
 function showFailed(w, errMsg) {
   if (w.failedEl) { removeEl(w.failedEl); w.failedEl = null; }
   w.failedEl = function makeFailed(w, errMsg) {
@@ -329,15 +323,14 @@ function mountIframe(w) {
 
   var iframe = document.createElement('iframe');
   iframe.src = buildSrc(w.kind, w.sitekey, w.id, w.theme); 
-  // 테두리 선(border)을 0으로 하고 둥근 모서리와 그림자만 남김
+  // [핵심] border:0으로 테두리 제거, 배경 transparent로 여백 이질감 제거
   iframe.style.cssText = 'width:90%;max-width:500px;height:auto;border:0;border-radius:24px;box-shadow:0 0 40px rgba(0,0,0,0.3);display:block;background:transparent;';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('allow', 'camera');
   
-  // 로딩 스피너를 버튼과 똑같은 구조로 삽입
+  // 로딩 스피너도 overlay 중앙에 정렬
   var spinner = makeSpinner(w.theme);
-  spinner.style.position = 'static'; // 절대 위치에서 정적 위치로 변경하여 overlay 내부 중앙 정렬 활용
-  
+  overlay.appendChild(spinner);
   overlay.appendChild(iframe);
   document.body.appendChild(overlay);
 
