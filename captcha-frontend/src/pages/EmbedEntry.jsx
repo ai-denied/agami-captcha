@@ -196,16 +196,6 @@ export default function EmbedEntry() {
         ` : ''}
       `}</style>
 
-      <div className={`w-full max-w-5xl`}>
-        {(status === 'idle' || status === 'loading') && (
-          <div className={`mx-auto flex h-48 w-full max-w-[640px] items-center justify-center rounded-3xl ${bgColor} ${cardEdge}`}>
-            <div className={`flex items-center gap-3 ${isDark ? 'text-gray-400' : 'text-[#6b7891]'}`}>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#e0e7f3] border-t-[#4a8bff]" />
-              <span className="text-sm font-medium">챌린지를 발급받는 중…</span>
-            </div>
-          </div>
-        )}
-
         {status === 'active' && spec && (
           <CaptchaRouter
             kind={kind}
