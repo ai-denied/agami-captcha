@@ -381,6 +381,7 @@ function findWidget(data, source) {
   return null;
 }
 
+// loader.js 내 5번 항목의 onMessage 함수 전체 교체
 function onMessage(event) {
   // origin 검증: 우리 서비스 origin 과 정확히 일치하지 않으면 즉시 무시.
   if (!SERVICE_ORIGIN || event.origin !== SERVICE_ORIGIN) return;
@@ -393,17 +394,47 @@ function onMessage(event) {
   switch (data.type) {
     case 'agami-result':
       if (data.success) {
-        w.token = data.captchaToken || '';
-        setHidden(w, w.token);
-        if (w.callback) {
-          try { w.callback(w.token); } catch (e) { warn('callback 예외: ' + e); }
-        }
-        // 트리거: 성공 → verified(접힘 + ✓). 토큰은 이미 widgets[wid].token 에 있음.
-        if (w.iframe) { clearSpinner(w); w.iframe.style.display = 'none'; }
-        if (w.triggerBtn) w.triggerBtn.hidden = true;
-        showVerified(w);
-        w.phase = 'verified';
-        setStatus(w, '확인되었습니다');
+        // [원인 해결 1] 캡차 성공 시 모달 창(오버레이) 즉시 완전 철거
+        removeIframe(w);
+        
+        // [원인 해결 2] 인라인 속성(display:flex) 충돌 방지를 위해 명시적으로 display:none 처리
+        if (w.triggerBtn) w.triggerBtn.style.display = 'none';
+
+        // [원인 해결 3] 최종 '확인됨' 처리 전 '검증 중' 딜레이 UI 임시 생성 및 부착
+        var verifyingUi = document.createElement('div');
+        var dark = w.theme === 'dark';
+        verifyingUi.style.cssText =
+          'display:flex;align-items:center;gap:14px;width:100%;box-sizing:border-box;' +
+          'min-height:60px;padding:0 18px 0 16px;border-radius:12px;position:relative;overflow:hidden;' +
+          (dark ? 'background:#23262e;' : 'background:#fff;border:1.5px solid #e3e6ec;');
+        
+        var spinnerColor = dark ? '#8FB2FF' : '#5B8BF7';
+        var textColor = dark ? '#fff' : '#2c313b';
+        verifyingUi.innerHTML =
+          '<span style="width:38px;height:38px;display:flex;align-items:center;justify-content:center;flex:none;">' +
+            '<style>@keyframes agami-spin { to { transform: rotate(360deg); } }</style>' +
+            '<span style="display:block;width:20px;height:20px;border:3px solid ' + (dark ? 'rgba(143,178,255,0.2)' : 'rgba(91,139,247,0.2)') + ';border-top-color:' + spinnerColor + ';border-radius:50%;animation:agami-spin 1s linear infinite;"></span>' +
+          '</span>' +
+          '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + textColor + ';">안전한 환경인지 검증 중...</span>';
+        
+        w.div.appendChild(verifyingUi);
+        setStatus(w, '검증을 진행 중입니다');
+
+        // 1.5초(1500ms) 대기 후 최종 토큰 발급 및 성공 상태 전환
+        setTimeout(function() {
+          removeEl(verifyingUi); // 대기 UI 제거
+          
+          w.token = data.captchaToken || '';
+          setHidden(w, w.token);
+          if (w.callback) {
+            try { w.callback(w.token); } catch (e) { warn('callback 예외: ' + e); }
+          }
+          
+          showVerified(w);
+          w.phase = 'verified';
+          setStatus(w, '확인되었습니다');
+        }, 1500);
+        
       } else {
         w.token = '';
         setHidden(w, '');
@@ -413,7 +444,7 @@ function onMessage(event) {
         // 트리거: 실패 → idle(iframe 제거, 트리거 버튼 복원 → 재클릭 가능).
         removeIframe(w);
         removeVerified(w);
-        if (w.triggerBtn) w.triggerBtn.hidden = false;
+        if (w.triggerBtn) w.triggerBtn.style.display = ''; // 숨김 해제 복구
         w.phase = 'idle';
         setStatus(w, '확인에 실패했습니다. 다시 시도해 주세요');
       }
