@@ -90,6 +90,10 @@ function buildSrc(kind, sitekey, wid, theme) {
   parts.push('wid=' + encodeURIComponent(wid));
   parts.push('host=' + encodeURIComponent(location.origin));
   parts.push('theme=' + encodeURIComponent(theme || 'light')); 
+  
+  // 💡 [핵심 조치] Iframe 캐시 트랩을 방지하기 위해 호출 시점의 고유 타임스탬프 추가
+  parts.push('_cb=' + new Date().getTime());
+
   return EMBED_BASE + '?' + parts.join('&');
 }
 
