@@ -127,13 +127,9 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
   // 문제 단계 진행률 (전체 시간 진행률은 FishTimer 가 자체 계산)
   const stepPct = ((step + 1) / total) * 100;
 
-  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
-  const cardEdge = embedded
-    ? 'border border-gray-200 shadow-sm'
-    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
-
   return (
-    <div className={`w-full max-w-[480px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
+    // 💡 변경점: cardEdge 변수를 삭제하고 기본 배경 및 모서리 곡률 속성만 남겼습니다.
+    <div className="w-full max-w-[480px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">
@@ -172,10 +168,7 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
           />
         </div>
 
-        {/* 현재 문제 이미지 — 컨테이너 자체에는 사이즈 강제 없이 flex 가운데 정렬.
-            이미지가 max-h-[40vh] 로 viewport 높이 40% 까지만 차지하고 비율(object-contain)
-            을 유지해서, 4지선다 / FishTimer / 푸터 가 같은 화면에 함께 보이도록 한다.
-            spinner 는 이미지 위에 absolute 로 겹쳐 그린다. */}
+        {/* 현재 문제 이미지 */}
         <div className="relative w-full bg-[#f0f4fb] rounded-xl overflow-hidden border-2 border-[#e0e7f3] flex items-center justify-center" style={{ minHeight: '160px' }}>
           <img
             key={step}
