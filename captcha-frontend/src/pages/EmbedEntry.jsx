@@ -98,20 +98,15 @@ export default function EmbedEntry() {
       });
       sentRef.current = true;
     } else if (status === 'fail') {
-      // 💡 [수정됨] 메시지 중복 전송을 막기 위해 플래그를 먼저 true로 변경
-      sentRef.current = true; 
-      
-      // 💡 [수정됨] 물고기 폭발 애니메이션(약 0.4초)이 끝날 때까지 메시지 전송을 500ms 지연
-      setTimeout(() => {
-        send({
-          type: 'agami-result',
-          success: false,
-          challengeId: spec?.challenge_id ?? null,
-          challengeType: spec?.kind ?? null,
-          captchaToken: null,
-          error: error
-        });
-      }, 500); 
+      send({
+        type: 'agami-result',
+        success: false,
+        challengeId: spec?.challenge_id ?? null,
+        challengeType: spec?.kind ?? null,
+        captchaToken: null,
+        error: error
+      });
+      sentRef.current = true;
     }
   }, [status, spec, token, error, send]);
 
