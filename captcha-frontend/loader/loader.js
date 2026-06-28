@@ -146,7 +146,7 @@ function makeTrigger(onClick, theme) {
   
   var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
   var labelColor = dark ? '#fff' : '#2c313b';
-  var fishSrc = EMBED_BASE.replace('/embed', '/timer-fish.png');
+  var fishSrc = EMBED_BASE.replace('/embed', '/fish.png');
 
   b.innerHTML =
     '<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:#5B8BF7;"></span>' +
