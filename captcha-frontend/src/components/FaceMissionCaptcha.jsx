@@ -5,12 +5,6 @@ import FishTimer from './FishTimer';
 
 // =============================================================================
 // MediaPipe 라이브러리 CDN 로딩
-// -----------------------------------------------------------------------------
-// @mediapipe/* npm 패키지는 package.json 의 sideEffects:[] 정책 때문에 Vite
-// 8 (Rolldown) production tree-shaker 가 side-effect import 를 통째로 제거한다.
-// → 번들에 코드 미포함 → window.FaceMesh undefined → 캡챠 동작 X.
-// 해결: <script> 태그로 jsdelivr CDN 에서 직접 로드. MediaPipe 공식 권장 패턴.
-// 모듈 레벨 single-flight Promise 로 마운트 횟수와 무관하게 1 회만 로드.
 // =============================================================================
 
 const g = /** @type {any} */ (globalThis);
@@ -69,7 +63,6 @@ function loadMediaPipe() {
       .catch((err) => { clearTimeout(timer); reject(err); });
   });
 
-  // 실패 시 다음 호출에서 재시도 가능하도록 cache 비움
   built.catch(() => { _mpPromise = null; });
   _mpPromise = built;
   return built;
@@ -77,22 +70,6 @@ function loadMediaPipe() {
 
 // =============================================================================
 // 안면 미션 캡챠 (MediaPipe Face Mesh 기반 실시간 자동 감지)
-// -----------------------------------------------------------------------------
-// 동작 흐름
-//   1) 마운트 시 FaceMesh 초기화 + Camera 시작
-//   2) 매 프레임 onResults → 랜드마크 추출 → 캔버스에 메쉬 오버레이
-//   3) 현재 지시 타입을 detectInstruction 으로 판정. true 가
-//      duration_sec 만큼 연속 유지되면 해당 단계 완료, 다음 단계로 자동 진행.
-//   4) 모든 단계 완료 시 onSubmit(payload) 1회 호출.
-//
-// 정리
-//   - useEffect cleanup 에서 camera.stop / faceMesh.close / track.stop 모두 수행.
-//
-// 알려진 한계 (MVP)
-//   - 클라이언트 사이드 검출이라 사용자가 마음먹고 우회 가능 (사진/녹화 영상 등).
-//   - 진짜 검증은 서버에서 행동 시퀀스 + 시간 + 행동 패턴 종합 분석 필요.
-//   - 팀원 AI 모델 합류 시 백엔드로 영상/랜드마크 시퀀스 전송 후 검증으로 교체 예정.
-//   - 현재 모델은 클라이언트가 completed_instructions 만 신뢰 보고하는 구조.
 // =============================================================================
 
 const ICON_FOR = {
@@ -104,39 +81,28 @@ const ICON_FOR = {
   nod: '🙇',
 };
 
-// A3: 손동작 지시 아이콘 (ICON_FOR 와 동형, 추가).
 const HAND_ICON_FOR = {
   open_hand: '🖐️',
   fist: '✊',
   pinch: '🤏',
 };
 
-// A3 좌우: 사용자 손 라벨. hand 미지정(None)이면 "손"(좌우 무관, backcompat).
 const HAND_SIDE_LABELS = { left: '왼손', right: '오른손' };
-
-// A3 손가락: 표시용 한국어 라벨 (fingers 지정 미션에서 사용; 발급 OFF면 미사용).
 const FINGER_KO = { thumb: '엄지', index: '검지', middle: '중지', ring: '약지', pinky: '새끼' };
 
 const COLOR_BLUE = '#4a8bff';
 const COLOR_YELLOW = '#fbbf24';
 const COLOR_WHITE = 'rgba(255, 255, 255, 0.95)';
 
-// MediaPipe WASM/asset CDN. 패키지 버전과 일치하는 디렉터리를 가리킴.
-const MP_FACE_MESH_CDN = (file) =>
-  `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-// A3: Hands WASM/asset CDN (face 와 동형).
-const MP_HANDS_CDN = (file) =>
-  `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+const MP_FACE_MESH_CDN = (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+const MP_HANDS_CDN = (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
 
-// 카메라 캡처 해상도. Camera 설정과 단일 출처로 공유하고, 증거 페이로드의
-// frame_w/frame_h 메타로도 실어 보낸다. (landmark 는 정규화 좌표라 기하 계산엔 무관)
 const CAMERA_WIDTH = 480;
 const CAMERA_HEIGHT = 480;
 
-// 원시 랜드마크 증거 버퍼링 파라미터 (A1).
 const EVIDENCE_FPS = 15;
-const EVIDENCE_MIN_INTERVAL_MS = 1000 / EVIDENCE_FPS; // 15fps 다운샘플
-const MAX_EVIDENCE_FRAMES = 150; // instruction당 상한 = 15fps × 10s
+const EVIDENCE_MIN_INTERVAL_MS = 1000 / EVIDENCE_FPS;
+const MAX_EVIDENCE_FRAMES = 150; 
 
 
 export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded = false }) {
@@ -147,40 +113,38 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   // MediaPipe 인스턴스
   const faceMeshRef = useRef(null);
   const cameraRef = useRef(null);
-  const handsRef = useRef(null); // A3: MediaPipe Hands (face 와 병렬)
-  // A3[2] FPS 계측 — face+hand 동시 송신의 실효 처리율 측정용.
+  const handsRef = useRef(null); 
   const fpsCountRef = useRef(0);
   const fpsWindowStartRef = useRef(0);
   const fpsSendMsRef = useRef(0);
-  // A3[3]: hand 트랙 상태 (face refs 와 동형, 병렬). face refs 는 무수정.
+
   const handIdxRef = useRef(0);
   const handProgressStartedAtRef = useRef(null);
   const handCompletedRef = useRef([]);
-  const handEvidenceRef = useRef([]); // [{type, completed_at_t, frames:[{t, landmarks}]}]
+  const handEvidenceRef = useRef([]); 
   const lastHandEvidenceAtRef = useRef(0);
-  const faceAllDoneRef = useRef(false); // 마지막 face 지시 완료 여부
-  const handAllDoneRef = useRef(false); // 마지막 hand 지시 완료 여부 (hand 없으면 true)
+  const faceAllDoneRef = useRef(false); 
+  const handAllDoneRef = useRef(false); 
 
-  // 콜백/상태 미러 ref (onResults 안에서 stale closure 회피)
+  // 콜백/상태 미러 ref
   const onSubmitRef = useRef(onSubmit);
   const specRef = useRef(spec);
   const instructionIdxRef = useRef(0);
   const progressStartedAtRef = useRef(null);
-  const noseHistoryRef = useRef([]); // NOD 검출용
+  const noseHistoryRef = useRef([]); 
   const completedRef = useRef([]);
   const startedAtRef = useRef(Date.now());
   const submittedRef = useRef(false);
   const advanceTimerRef = useRef(null);
-  const evidenceRef = useRef([]); // instruction별 증거 버퍼 [{type, frames:[{t, landmarks}]}]
-  const lastEvidenceAtRef = useRef(0); // 마지막 증거 기록 시각 (다운샘플 throttle)
+  const evidenceRef = useRef([]); 
+  const lastEvidenceAtRef = useRef(0); 
 
   // 렌더 트리거용 상태
   const [detectionStatus, setDetectionStatus] = useState('initializing');
-  // initializing | no_face | instruction_active | instruction_complete | denied | error
   const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
   const [progressFraction, setProgressFraction] = useState(0);
-  const [currentHandIndex, setCurrentHandIndex] = useState(0); // A3: hand 지시 인덱스
-  const [handDetected, setHandDetected] = useState(false); // A3: 현재 hand 제스처 충족 표시
+  const [currentHandIndex, setCurrentHandIndex] = useState(0); 
+  const [handDetected, setHandDetected] = useState(false); 
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
   const [hintVisible, setHintVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -190,7 +154,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     && typeof g.Hands === 'function',
   );
 
-  // MediaPipe CDN 사전 로딩 (마운트 1회). 이미 로드돼있으면 즉시 ready.
   useEffect(() => {
     if (mpReady) return;
     let cancelled = false;
@@ -205,7 +168,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     return () => { cancelled = true; };
   }, [mpReady]);
 
-  // ref 동기화
   useEffect(() => { onSubmitRef.current = onSubmit; }, [onSubmit]);
   useEffect(() => {
     specRef.current = spec;
@@ -216,7 +178,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     evidenceRef.current = [];
     lastEvidenceAtRef.current = 0;
     submittedRef.current = false;
-    // A3: hand 트랙 리셋 (face 와 동형). hand 없는 spec 이면 handAllDone=true(하위호환).
     handIdxRef.current = 0;
     handProgressStartedAtRef.current = null;
     handCompletedRef.current = [];
@@ -233,7 +194,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     setHintVisible(false);
   }, [spec]);
 
-  // 디스플레이용 카운트다운 + 힌트 (자동 fail 은 useCaptcha 훅이 처리)
   useEffect(() => {
     if (!spec) return;
     const tick = setInterval(() => {
@@ -249,14 +209,10 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     return () => { clearInterval(tick); if (hintTimer) clearTimeout(hintTimer); };
   }, [spec]);
 
-  // ---------------------------------------------------------------------------
-  // MediaPipe + Camera 초기화 (mpReady=true 이후 1회)
-  // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!mpReady) return;  // CDN 로딩 대기
+    if (!mpReady) return;  
     if (!videoRef.current || !canvasRef.current) return;
 
-    // 방어용 가드 — CDN 로드 성공 후에도 만약 등록 안 됐다면 명확히 에러로 떨어뜨림.
     if (typeof g.FaceMesh !== 'function' || typeof g.Camera !== 'function') {
       setDetectionStatus('error');
       setErrorMessage('MediaPipe 심볼 등록 실패 — 페이지 새로고침 후 재시도하세요.');
@@ -280,8 +236,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     faceMesh.onResults((results) => handleResults(results, canvas, ctx));
     faceMeshRef.current = faceMesh;
 
-    // A3[2]: Hands 를 face 와 병렬로 생성. face 검출 로직(handleResults/faceDetection)
-    // 은 무수정 — hands 는 추가만. 이 단계는 토대 확인용으로 제스처/FPS 를 콘솔에 로그.
     const hands = new g.Hands({ locateFile: MP_HANDS_CDN });
     hands.setOptions({
       maxNumHands: 2,
@@ -298,17 +252,12 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
         const t0 = performance.now();
         try {
           await faceMeshRef.current.send({ image: video });
-          // A3[2]: face + hand 동시 송신. 둘 다 await. hands 는 추가만.
           if (handsRef.current) {
             await handsRef.current.send({ image: video });
           }
         } catch (err) {
-          // 모델이 닫힌 후 들어오는 마지막 frame 등은 무시
           if (!cancelled) console.warn('mp send failed:', err);
         }
-        // A3[2] FPS 계측: face+hand 동시 처리의 실효 fps 를 1초 창마다 콘솔 출력.
-        // 15fps(EVIDENCE_FPS) 미만이면 증거 다운샘플 목표 미달 → modelComplexity:0
-        // 또는 프레임 교대 대안 검토 필요(보고 참조).
         const t1 = performance.now();
         fpsSendMsRef.current += t1 - t0;
         fpsCountRef.current += 1;
@@ -353,7 +302,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       faceMeshRef.current = null;
       cameraRef.current = null;
       handsRef.current = null;
-      // Camera 클래스가 만든 stream 도 명시적으로 해제 (LED off 보장)
       const stream = video.srcObject;
       if (stream && typeof stream.getTracks === 'function') {
         stream.getTracks().forEach((t) => {
@@ -364,11 +312,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     };
   }, [mpReady]);
 
-  // ---------------------------------------------------------------------------
-  // A3[3]: face·hand 둘 다 완료됐을 때만 1회 제출. face 완료(handleResults)와
-  // hand 완료(handleHandResults)가 각각 호출하고, 두 트랙 모두 끝났을 때 제출한다
-  // (기획: 둘 다 만족해야 클리어). 서버는 face_hit AND hand_hit 로 각각 검증.
-  // ---------------------------------------------------------------------------
   function maybeSubmit() {
     if (submittedRef.current) return;
     if (!faceAllDoneRef.current || !handAllDoneRef.current) return;
@@ -407,11 +350,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // A3[3] hand 결과 콜백 (hands.onResults). face handleResults 와 동형이되 hand refs
-  // 에만 쓴다 — face 검출/표시/evidence 로직과 완전 독립. 기대 hand 제스처를
-  // duration_sec 연속 유지하면 해당 hand 지시 완료 → completed_at_t 기록 → maybeSubmit.
-  // ---------------------------------------------------------------------------
   function handleHandResults(results) {
     if (submittedRef.current) return;
     const currentSpec = specRef.current;
@@ -419,7 +357,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
     const handInsts = currentSpec.hand_instructions || [];
     if (handInsts.length === 0) {
-      handAllDoneRef.current = true; // hand 미요구 spec → 즉시 완료(하위호환)
+      handAllDoneRef.current = true;
       maybeSubmit();
       return;
     }
@@ -432,28 +370,24 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       return;
     }
 
-    // A3 좌우: 기대 손(inst.hand)이 지정되면 그 손을 고르고, 없으면 첫 손([0], 기존 동작).
     const handLms = results.multiHandLandmarks || [];
     const handedness = results.multiHandedness || [];
-    const expectedSide = inst.hand ?? null; // "left"|"right"|null(좌우 무관)
+    const expectedSide = inst.hand ?? null;
     let pickIdx = 0;
     if (expectedSide) {
       pickIdx = handLms.findIndex((_, i) => toUserHand(handedness[i]?.label) === expectedSide);
     }
     const lm = pickIdx >= 0 ? handLms[pickIdx] : undefined;
     if (!lm) {
-      // 손 미검출(또는 기대 side 손 없음) → 진행 리셋 (face no_face 와 동형)
       handProgressStartedAtRef.current = null;
       setHandDetected(false);
       return;
     }
-    const observedHand = toUserHand(handedness[pickIdx]?.label); // 관측된 사용자 손
+    const observedHand = toUserHand(handedness[pickIdx]?.label); 
 
-    // 원시 hand 랜드마크 증거 기록 (face evidence 와 동형, 15fps 다운샘플).
     const nowMs = Date.now();
     const gesture = detectHandGesture(lm);
     if (nowMs - lastHandEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
-      // A3 손가락: 관측 폄 상태(서버는 frames 로 재계산하지만 위젯 관측치도 실어둠).
       const observedFingers = {
         thumb: isFingerExtended(lm, 'thumb'),
         index: isFingerExtended(lm, 'index'),
@@ -470,7 +404,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
         handEvidenceRef.current[idx] = buf;
       } else {
         if (buf.hand == null && observedHand != null) buf.hand = observedHand;
-        buf.fingers_state = observedFingers; // 최신 관측 손가락 상태
+        buf.fingers_state = observedFingers; 
       }
       if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
         buf.frames.push({ t: nowMs, landmarks: extractHandEvidence(lm) });
@@ -478,10 +412,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       lastHandEvidenceAtRef.current = nowMs;
     }
 
-    // 제스처 검출 + 연속 유지 (face 게이지와 동형).
-    // finger_pose 는 단일 제스처(open/fist/pinch)가 아니라 손가락 집합 일치로 판정한다
-    // (detectHandGesture 는 'finger_pose' 를 반환하지 않으므로 fingersMatch 사용).
-    // 서버 _verify_fingers/_fingers_match 와 동일 기준 → 위젯·서버 완료 판정 일치.
     const detected = inst.type === 'finger_pose'
       ? fingersMatch(lm, inst.fingers || [])
       : gesture === inst.type;
@@ -511,16 +441,12 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // onResults : 매 프레임 호출 (faceMesh.onResults 콜백)
-  // ---------------------------------------------------------------------------
   function handleResults(results, canvas, ctx) {
     if (submittedRef.current) return;
 
     const currentSpec = specRef.current;
     if (!currentSpec) return;
 
-    // 캔버스 크기 동기화 (video 의 실제 해상도에 맞춤)
     const vw = results.image?.width || 480;
     const vh = results.image?.height || 480;
     if (canvas.width !== vw) canvas.width = vw;
@@ -531,7 +457,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
     const lm = results.multiFaceLandmarks?.[0];
     if (!lm) {
-      // 얼굴 미검출
       ctx.restore();
       setDetectionStatus('no_face');
       progressStartedAtRef.current = null;
@@ -539,23 +464,18 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       return;
     }
 
-    // 코 Y 누적 (NOD 검출용)
     noseHistoryRef.current.push({ y: lm[1].y, t: Date.now() });
     if (noseHistoryRef.current.length > 60) noseHistoryRef.current.shift();
 
-    // 현재 지시
     const idx = instructionIdxRef.current;
     const inst = currentSpec.instructions[idx];
 
-    // 메쉬 오버레이
     drawMesh(ctx, lm, inst?.type);
     ctx.restore();
 
     if (!inst) return;
 
-    // 원시 랜드마크 증거 기록 (A1). detected/게이지와 독립 — 얼굴이 검출되고 active
-    // instruction 이 있는 프레임을 15fps 로 다운샘플해 누적한다(서버 기하검증의 입력).
-    const nowMs = Date.now(); // noseHistory(아래 push)와 동일 시간원
+    const nowMs = Date.now(); 
     if (nowMs - lastEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
       let buf = evidenceRef.current[idx];
       if (!buf || buf.type !== inst.type) {
@@ -568,7 +488,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       lastEvidenceAtRef.current = nowMs;
     }
 
-    // 동작 검출 + 진행도 누적
     const detected = detectInstruction(inst.type, lm, noseHistoryRef.current);
     setDetectionStatus(detected ? 'instruction_active' : 'no_face');
 
@@ -581,10 +500,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       setProgressFraction(Math.min(1, elapsed / target));
 
       if (elapsed >= target) {
-        // 단계 완료
         completedRef.current.push(inst.type);
-        // 완료 시각 기록 (증거 프레임 t 와 동일 시간원 nowMs). 마지막 지시면 바로 아래
-        // onSubmit 이 호출되므로 페이로드 조립 전에 set 되어야 한다.
         const evEntry = evidenceRef.current[idx];
         if (evEntry) evEntry.completed_at_t = nowMs;
         progressStartedAtRef.current = null;
@@ -593,13 +509,9 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
         const nextIdx = idx + 1;
         if (nextIdx >= currentSpec.instructions.length) {
-          // A3: 마지막 face 지시 완료 → face 트랙 완료 표시. 실제 제출은 hand 까지
-          // 끝난 뒤 maybeSubmit 이 1회 수행한다(둘 다 만족해야 클리어 — 기획).
-          // 위 face 검출/게이지/evidence(completed_at_t 포함) 로직은 무수정.
           faceAllDoneRef.current = true;
           maybeSubmit();
         } else {
-          // 0.6s 동안 체크마크 보여주고 다음 단계로
           if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
           advanceTimerRef.current = setTimeout(() => {
             instructionIdxRef.current = nextIdx;
@@ -609,7 +521,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
         }
       }
     } else {
-      // 끊기면 진행 게이지 리셋
       if (progressStartedAtRef.current != null) {
         progressStartedAtRef.current = null;
         setProgressFraction(0);
@@ -621,16 +532,12 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
   const totalSteps = spec.instructions.length;
   const currentInstruction = spec.instructions[currentInstructionIndex];
-  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; // A3
+  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; 
   const isCompleteFlash = detectionStatus === 'instruction_complete';
 
-  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
-  const cardEdge = embedded
-    ? 'border border-gray-200 shadow-sm'
-    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
-
   return (
-    <div className={`w-full max-w-[520px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
+    // 💡 변경점: 테두리와 그림자를 생성하던 cardEdge 로직을 완전히 제거하고, 손전등 캡챠와 동일한 기본 외형으로 수정했습니다.
+    <div className="w-full max-w-[520px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">
@@ -696,7 +603,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             </div>
           )}
 
-          {/* A3: 손동작 지시 (얼굴 줄 아래에 동시 표시 — face pill 무수정, 추가). */}
+          {/* A3: 손동작 지시 */}
           {currentHandInstruction && (
             <div className="absolute top-[3.75rem] left-3 right-3 flex justify-center pointer-events-none">
               <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${handDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
@@ -789,7 +696,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           )}
         </div>
 
-        {/* 동작 유지 게이지 (instructionProgressMs / duration_sec * 1000) */}
+        {/* 동작 유지 게이지 */}
         <div className="mt-3.5 mb-1">
           <div className="flex items-center justify-between text-xs text-[#8a96ad] mb-1.5">
             <span>현재 동작 유지</span>
@@ -805,7 +712,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           </div>
         </div>
 
-        {/* 전체 남은 시간 — 물고기 한 마리가 우측에서 좌측으로 헤엄친다 */}
         <FishTimer
           remainingMs={timeLeft * 1000}
           totalMs={spec.time_limit_sec * 1000}
@@ -832,10 +738,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   );
 }
 
-
-// ---------------------------------------------------------------------------
-// 메쉬 오버레이 — 현재 지시 타입에 따라 관련 부위만 노란색으로 강조
-// ---------------------------------------------------------------------------
 function drawMesh(ctx, landmarks, currentType) {
   const FACE_OPTS = { color: COLOR_WHITE, lineWidth: 1.5 };
   const BLUE_OPTS = { color: COLOR_BLUE, lineWidth: 1.5 };
@@ -848,18 +750,11 @@ function drawMesh(ctx, landmarks, currentType) {
     || currentType === 'turn_right'
     || currentType === 'nod';
 
-  // 캔버스가 CSS scaleX(-1) 로 거울 반전되므로, MediaPipe 의 LEFT_EYE(이미지 좌측)
-  // 는 시각적으로 viewer 의 RIGHT 에 나타난다 = 사용자 관점의 RIGHT eye.
-  // 따라서 사용자 관점 highlight 매핑은 다음과 같이 뒤집어서 그린다:
-  //   사용자 LEFT eye highlight  → FACEMESH_RIGHT_EYE 에 노란색
-  //   사용자 RIGHT eye highlight → FACEMESH_LEFT_EYE  에 노란색
-  // CDN 로드 후 호출되는 콜백이라 g.drawConnectors / g.FACEMESH_* 는 항상 존재.
   g.drawConnectors(ctx, landmarks, g.FACEMESH_FACE_OVAL, FACE_OPTS);
   g.drawConnectors(ctx, landmarks, g.FACEMESH_LEFT_EYE, isBlinkRight ? HIGHLIGHT_OPTS : BLUE_OPTS);
   g.drawConnectors(ctx, landmarks, g.FACEMESH_RIGHT_EYE, isBlinkLeft ? HIGHLIGHT_OPTS : BLUE_OPTS);
   g.drawConnectors(ctx, landmarks, g.FACEMESH_LIPS, isSmile ? HIGHLIGHT_OPTS : BLUE_OPTS);
 
-  // 코끝 점
   const nose = landmarks[1];
   if (nose) {
     ctx.beginPath();
