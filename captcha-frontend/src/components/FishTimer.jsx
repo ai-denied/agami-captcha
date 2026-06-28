@@ -185,7 +185,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
           src="/bot.png"
           onError={(e) => {
             console.log(e.currentTarget.currentSrc);
-          }}
+          }
           alt=""
           aria-hidden
           width={FISH_SIZE_PX}
@@ -283,7 +283,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
               src="/fish.png"
               onError={onError={(e) => {
                 console.log(e.currentTarget.currentSrc);
-              }}
+              }
               alt=""
               aria-hidden
               width={FISH_SIZE_PX}
