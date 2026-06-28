@@ -4,18 +4,8 @@ import { API_BASE_URL } from '../api/captchaApi';
 
 // =============================================================================
 // 감정 맥락 추론 캡챠 위젯 (N문제 시퀀스 인터랙션)
-// -----------------------------------------------------------------------------
-// 한 챌린지가 spec.questions = [{index, image_url, choices}, ...] 형태로 도착.
-// 사용자는 step 마다 1문제를 풀며, 마지막 문제에서 "제출하기" 클릭 시 누적 답안을
-// onSubmit({ submitted_answers: [...] }) 으로 한 번에 백엔드로 전달.
-//
-// prop 시그니처는 기존과 동일 — FlashlightCaptcha / FaceMissionCaptcha 와 통일.
-// (CaptchaRouter / ContextCaptchaPage 가 import 하는 이름 `ImageGridCaptcha` 유지)
 // =============================================================================
 
-// 감정추론 채점 서비스의 14-라벨 표시용 한글/이모지 맵 (display-only).
-// 보기 value 는 서비스가 준 영문 라벨 문자열 그대로 제출되며, 아래 맵은 표시에만 쓰인다.
-// 미매핑 라벨은 fallback(영문 원문 / 🎯)으로 렌더되어 크래시하지 않는다.
 const EMOTION_KO = {
   happiness: '행복',
   calm: '평온',
@@ -51,21 +41,14 @@ const EMOTION_ICON = {
 };
 
 export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
-  // 카운트다운 (전체 시간 제한, 문제 이동 무관 유지)
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
-
-  // 진행 상태
-  const [step, setStep] = useState(0);            // 현재 문제 인덱스 0..total-1
-  const [answers, setAnswers] = useState([]);     // 확정된 이전 문제 답안
-  const [selected, setSelected] = useState(null); // 현재 문제 선택값 (null = 미선택)
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState([]);
+  const [selected, setSelected] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-
-  // 현재 step 이미지 로딩 추적 (step 변경마다 리셋)
   const [imgLoaded, setImgLoaded] = useState(false);
-
   const startedAtRef = useRef(Date.now());
 
-  // spec 변경 (재시도/새 챌린지) 시 모든 상태 초기화
   useEffect(() => {
     if (!spec) return;
     setTimeLeft(spec.time_limit_sec);
@@ -77,12 +60,10 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
     startedAtRef.current = Date.now();
   }, [spec]);
 
-  // 문제가 바뀔 때마다 이미지 로딩 상태 리셋
   useEffect(() => {
     setImgLoaded(false);
   }, [step]);
 
-  // 1Hz 카운트다운 — 문제 이동과 무관하게 전체 시간 유지
   useEffect(() => {
     if (!spec) return;
     const tick = setInterval(() => {
@@ -109,7 +90,6 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
   const handleNext = () => {
     if (!canAdvance) return;
     if (isLastStep) {
-      // 마지막 문제 → 누적 답안 + 현재 선택을 합쳐서 백엔드로 한 번에 제출
       setSubmitting(true);
       onSubmit({
         submitted_answers: [...answers, selected],
@@ -124,12 +104,11 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
     }
   };
 
-  // 문제 단계 진행률 (전체 시간 진행률은 FishTimer 가 자체 계산)
   const stepPct = ((step + 1) / total) * 100;
 
   return (
-    // 💡 변경점: cardEdge 변수를 삭제하고 기본 배경 및 모서리 곡률 속성만 남겼습니다.
-    <div className="w-full max-w-[480px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto">
+    // 💡 핵심 조치: max-w-[480px]를 520px로 확장하여 iframe 화면에 꽉 차도록 여백 제거
+    <div className="w-full max-w-[520px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">
@@ -243,7 +222,7 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
             : '다음 →'}
         </button>
 
-        {/* 전체 남은 시간 — 물고기 한 마리가 우측에서 좌측으로 헤엄친다 */}
+        {/* 전체 남은 시간 */}
         <FishTimer
           remainingMs={timeLeft * 1000}
           totalMs={spec.time_limit_sec * 1000}
