@@ -30,6 +30,7 @@ from app.captcha.challenge_types import (
     FlashlightChallengeSpec,
 )
 from app.captcha.context_generator import generate_context_challenge
+from app.captcha import context_client
 from app.captcha.face_generator import generate_face_challenge
 from app.captcha.flashlight_generator import generate_flashlight_challenge
 from app.captcha.captcha_logger import schedule_attempt_log, schedule_mlops_logs
@@ -42,7 +43,6 @@ from app.captcha.inference_client import (
 from app.captcha.mlops_formatter import to_training_sessions
 from app.captcha.verifier import (
     baseline_verdict,
-    check_context_hit,
     check_flashlight_hit,
 )
 from app.captcha.face_evidence import FaceEvidence, check_face_evidence
@@ -116,7 +116,7 @@ async def issue_challenge(
         spec, answer = generate_face_challenge(difficulty)
         variant_value = None
     else:  # CONTEXT_INFERENCE
-        spec, answer = generate_context_challenge(difficulty)
+        spec, answer = await generate_context_challenge(difficulty)
         variant_value = None
 
     # 소유 체인: api_keys → challenges. 검증 단계는 Challenge ORM 을 로드하지 않고
@@ -255,7 +255,22 @@ async def submit_answer(
                     "message": "submitted_answers is required for context_inference challenges.",
                 },
             )
-        hit = check_context_hit(answer, body.submitted_answers)
+        # 채점은 외부 감정추론 서비스(/context-emotion/attempt)에 위임.
+        # solve_time_ms: 위젯 실경과(behavioral_data.time_taken_ms) 우선, 없거나 범위
+        # 밖이면 발급~지금 경과로 보정(0~600000 클램프).
+        widget_ms = (
+            body.behavioral_data.time_taken_ms
+            if body.behavioral_data and body.behavioral_data.time_taken_ms is not None
+            else None
+        )
+        if widget_ms is not None and 0 <= widget_ms <= 600_000:
+            solve_time_ms = int(widget_ms)
+        else:
+            elapsed_ms = int(
+                (datetime.now(timezone.utc) - answer.created_at).total_seconds() * 1000
+            )
+            solve_time_ms = max(0, min(600_000, elapsed_ms))
+        hit = await context_client.grade(answer, body.submitted_answers, solve_time_ms)
     else:
         # 미래 확장 대비
         hit = False

@@ -14,3 +14,6 @@ data:
   # envFrom: configMapRef 로 자동 주입(case-insensitive → Settings.inference_api_url).
   INFERENCE_API_URL: "http://flashlight-inference-api-svc"
   INFERENCE_TIMEOUT_SEC: "5.0"
+  # 감정추론 채점 서비스 (context-emotion-api, agami ns, port 8083). deployment 가
+  # envFrom: configMapRef 로 자동 주입(case-insensitive → Settings.context_emotion_api_url).
+  CONTEXT_EMOTION_API_URL: "http://context-emotion-api:8083"

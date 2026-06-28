@@ -28,6 +28,7 @@ from typing import List
 
 from app.api.public import router as public_router
 from app.api.user import router as user_router
+from app.api.context_image import router as context_image_router
 from app.cache.redis_client import close_redis, init_redis
 from app.captcha.flashlight_image_dataset import IMAGE_DIR, get_dataset
 from app.core.config import get_settings
@@ -248,6 +249,12 @@ app.include_router(public_router)
 # 외부 기업 백엔드의 /v1/siteverify 직접 호출 경로도 그대로 유지.
 # (기존 /api 는 agami-ingress 의 카카오 로그인 백엔드와 충돌하므로 /captcha 로 분리.)
 app.include_router(public_router, prefix="/captcha")
+
+# 감정추론 이미지 프록시(context_inference). emotion 서비스 이미지를 엔진 도메인으로
+# 중계해 호스트를 은닉한다. public_router 와 동일하게 루트 + /captcha 양쪽에 노출
+# → /v1/context-image/* 와 /captcha/v1/context-image/* (위젯은 API_BASE_URL 접두).
+app.include_router(context_image_router)
+app.include_router(context_image_router, prefix="/captcha")
 
 # 로그인 사용자 전용 라우터(accessToken JWT 쿠키 인증). public_router 와 동일하게
 # /captcha prefix 로 등록 → 최종 /captcha/v1/* (예: /captcha/v1/whoami).

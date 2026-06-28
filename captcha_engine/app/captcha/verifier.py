@@ -12,8 +12,6 @@ from __future__ import annotations
 import math
 
 from app.captcha.challenge_types import (
-    ContextChallengeAnswer,
-    Emotion,
     FaceChallengeAnswer,
     FlashlightSubAnswer,
 )
@@ -66,32 +64,6 @@ def check_face_hit(
     if not completed_instructions:
         return False
     return list(completed_instructions) == list(answer.expected_instruction_types)
-
-
-def check_context_hit(
-    answer: ContextChallengeAnswer,
-    submitted_answers: list[str] | None,
-) -> bool:
-    """
-    임시 검증: 클라이언트가 제출한 submitted_answers (출제 순서대로) 가
-    answer.correct_answers 와 길이/순서/내용 모두 완전히 일치하면 True.
-    단 하나라도 다르면 False.
-
-    TODO: 팀원 AI 판별 모델 합류 시 이 함수를 score_context_with_ai_model() 로 교체.
-    교체 시그니처 예시:
-        def score_context_with_ai_model(
-            answer: ContextChallengeAnswer,
-            submitted_answers: list[str],
-            behavioral_data: BehavioralData | None,
-        ) -> tuple[Literal["human", "bot", "uncertain"], float]: ...
-    """
-    if submitted_answers is None:
-        return False
-    if len(submitted_answers) != len(answer.correct_answers):
-        return False
-    # 미정의 Emotion 값이 섞여 있어도 문자열 비교로 안전. 대소문자/공백 차이가
-    # 발생할 가능성은 클라이언트가 Emotion enum value 를 그대로 보내는 한 없음.
-    return list(submitted_answers) == list(answer.correct_answers)
 
 
 def baseline_verdict(hit: bool) -> tuple[str, float]:

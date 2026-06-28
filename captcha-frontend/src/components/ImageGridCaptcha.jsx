@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import FishTimer from './FishTimer';
+import { API_BASE_URL } from '../api/captchaApi';
 
 // =============================================================================
 // 감정 맥락 추론 캡챠 위젯 (N문제 시퀀스 인터랙션)
@@ -12,24 +13,41 @@ import FishTimer from './FishTimer';
 // (CaptchaRouter / ContextCaptchaPage 가 import 하는 이름 `ImageGridCaptcha` 유지)
 // =============================================================================
 
+// 감정추론 채점 서비스의 14-라벨 표시용 한글/이모지 맵 (display-only).
+// 보기 value 는 서비스가 준 영문 라벨 문자열 그대로 제출되며, 아래 맵은 표시에만 쓰인다.
+// 미매핑 라벨은 fallback(영문 원문 / 🎯)으로 렌더되어 크래시하지 않는다.
 const EMOTION_KO = {
-  joy: '기쁨',
-  sadness: '슬픔',
+  happiness: '행복',
+  calm: '평온',
+  anticipation: '기대',
+  affection: '애정',
   anger: '분노',
   fear: '두려움',
-  surprise: '놀람',
-  disgust: '혐오',
-  contempt: '경멸',
+  sadness: '슬픔',
+  disconnection: '지침',
+  suffering: '고통',
+  aversion: '거부감',
+  embarrassment: '당혹',
+  confidence: '자신감',
+  confusion: '혼란',
+  yearning: '그리움',
 };
 
 const EMOTION_ICON = {
-  joy: '😊',
-  sadness: '😢',
+  happiness: '😊',
+  calm: '😌',
+  anticipation: '🤔',
+  affection: '🥰',
   anger: '😠',
   fear: '😨',
-  surprise: '😲',
-  disgust: '🤢',
-  contempt: '😒',
+  sadness: '😢',
+  disconnection: '😶',
+  suffering: '😣',
+  aversion: '🤢',
+  embarrassment: '😳',
+  confidence: '😎',
+  confusion: '😕',
+  yearning: '🥺',
 };
 
 export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
@@ -161,7 +179,7 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
         <div className="relative w-full bg-[#f0f4fb] rounded-xl overflow-hidden border-2 border-[#e0e7f3] flex items-center justify-center" style={{ minHeight: '160px' }}>
           <img
             key={step}
-            src={currentQ?.image_url}
+            src={`${API_BASE_URL}${currentQ?.image_url ?? ''}`}
             alt={`감정 추론 문제 ${step + 1}`}
             onLoad={() => setImgLoaded(true)}
             onError={() => setImgLoaded(true)}

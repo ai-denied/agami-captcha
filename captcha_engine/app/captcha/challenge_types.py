@@ -333,9 +333,12 @@ class ContextQuestion(BaseModel):
     """
     index: int = Field(..., ge=0, description="0-based 출제 순서.")
     image_url: str = Field(..., description="문제 이미지 URL.")
-    choices: list[Emotion] = Field(
+    choices: list[str] = Field(
         ..., min_length=2, max_length=8,
-        description="이 문제의 4지선다 보기 (정답 포함, 매 문제 독립 셔플)."
+        description=(
+            "이 문제의 보기 (감정추론 서비스가 내려준 라벨 문자열, 정답 포함). "
+            "엔진은 어휘에 비종속 — 위젯이 그대로 렌더하고 제출값으로 재사용."
+        ),
     )
 
 
@@ -361,17 +364,41 @@ class ContextChallengeSpec(ChallengeSpecBase):
     )
 
 
+class ContextSubAnswer(BaseModel):
+    """
+    감정 맥락 추론 1문항에 대한 서버 보관용 메타.
+    정답은 엔진이 보관하지 않는다 — 외부 감정추론 서비스가 채점한다. 대신 그 서비스의
+    문항 challenge_id 와 이미지 상대경로(프록시 재구성용)만 보관한다.
+    """
+    index: int = Field(..., ge=0, description="0-based 출제 순서. spec.questions 와 매칭.")
+    emotion_challenge_id: str = Field(
+        ..., description="감정추론 서비스가 발급한 이 문항의 challenge_id (attempt 재전송용)."
+    )
+    image_path: str = Field(
+        ...,
+        description=(
+            "감정추론 서비스가 준 이미지 상대경로 전체 (예: "
+            "'/static/images/emotic/framesdb/framesdb/images/frame_X.jpg'). "
+            "v2 명세: 파싱 없이 그대로 보관하고 프록시가 base_url 에 붙여 사용."
+        ),
+    )
+
+
 class ContextChallengeAnswer(BaseModel):
     """
-    서버 측에 보관되는 감정 맥락 추론 정답.
-    correct_answers 는 questions 의 index 순서대로 정답 감정 문자열을 나열.
-    클라이언트의 submitted_answers 와 전체 일치해야 hit.
+    서버 측에 보관되는 감정 맥락 추론 정답 메타 (Redis 저장).
+    정답 자체는 보관하지 않는다 — 외부 감정추론 서비스(/context-emotion/attempt)가
+    session_id + 문항 challenge_id 로 채점한다. 절대 클라이언트로 직렬화 금지.
     """
     challenge_id: str
     kind: Literal[ChallengeKind.CONTEXT_INFERENCE] = ChallengeKind.CONTEXT_INFERENCE
-    correct_answers: list[str] = Field(
+    session_id: str = Field(
+        ...,
+        description="감정추론 서비스 세션 id. 발급 시 1개 생성·전 문항 공유, attempt 에 그대로 재전송.",
+    )
+    sub_answers: list[ContextSubAnswer] = Field(
         ..., min_length=1, max_length=8,
-        description="출제 순서대로의 정답 감정 (Emotion enum 의 value)."
+        description="문항별 채점 메타(emotion challenge_id + 이미지 파일명). 출제 순서.",
     )
     created_at: datetime
     expires_at: datetime

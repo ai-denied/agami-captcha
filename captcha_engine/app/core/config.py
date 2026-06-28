@@ -95,6 +95,16 @@ class Settings(BaseSettings):
     )
 
     # -----------------------------------------------------------------------
+    # 감정 맥락 추론 채점 서비스 (context-emotion-api) — context_inference 브리지
+    # -----------------------------------------------------------------------
+    # captcha-api(엔진)가 브리지로서 호출하는 외부 감정추론 채점 서비스.
+    # 위젯/회원사에는 노출되지 않는다(엔진 내부 호출 + 이미지 프록시로 은닉).
+    # K8s 에서는 captcha-config ConfigMap 의 CONTEXT_EMOTION_API_URL 로 주입(case-insensitive).
+    context_emotion_api_url: str = Field(default="http://context-emotion-api:8083")
+    # /context-emotion/challenge·/attempt 및 이미지 프록시 upstream 호출 타임아웃(초).
+    context_emotion_timeout_sec: float = Field(default=5.0)
+
+    # -----------------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------------
     # 콤마로 구분된 origin 문자열. K8s ConfigMap 에서 한 줄로 주입하기 쉽게 string.
