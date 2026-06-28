@@ -10,7 +10,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 const BOT_WIDTH_PX = 50;
 const FISH_SIZE_PX = 45;
-const FISH_MOUTH_OFFSET_PX = 14;        // 이미지 좌측 ~ 물고기 입까지 (px)
+const FISH_MOUTH_OFFSET_PX = 5;        // 이미지 좌측 ~ 물고기 입까지 (px)
 const CURVE_AMPLITUDE_PX = 10;          // sin 진폭
 const CURVE_PERIOD_PX = 120;            // sin 주기
 const CONTAINER_HEIGHT_PX = 64;         // h-16
