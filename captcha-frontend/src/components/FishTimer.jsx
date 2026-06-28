@@ -182,14 +182,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
         aria-hidden
       >
         <img
-          src="/bot.png"
-          onError={(e) => {
-            console.log("bot error:", e.currentTarget.currentSrc);
-          }}
-          
-          onLoad={(e) => {
-            console.log("bot loaded:", e.currentTarget.currentSrc);
-          }}
+          src={`${import.meta.env.BASE_URL}bot.png`}
           alt=""
           aria-hidden
           width={FISH_SIZE_PX}
@@ -284,14 +277,7 @@ export default function FishTimer({ remainingMs, totalMs, className = '' }) {
             }}
           >
             <img
-              src="/fish.png"
-              onError={(e) => {
-                console.log("fish error:", e.currentTarget.currentSrc);
-              }}
-              
-              onLoad={(e) => {
-                console.log("fish loaded:", e.currentTarget.currentSrc);
-              }}
+              src={`${import.meta.env.BASE_URL}fish.png`}
               alt=""
               aria-hidden
               width={FISH_SIZE_PX}
