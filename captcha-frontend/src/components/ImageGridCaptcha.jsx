@@ -3,7 +3,7 @@ import FishTimer from './FishTimer';
 import { API_BASE_URL } from '../api/captchaApi';
 
 // =============================================================================
-// 감정 맥락 추론 캡챠 위젯 (N문제 시퀀스 인터랙션)
+// 감정 맥락 추론 캡챠 위젯 (개별 문항 실시간 채점 및 3회 점수 합산 트랙)
 // =============================================================================
 
 const EMOTION_KO = {
@@ -40,13 +40,11 @@ const EMOTION_ICON = {
   yearning: '🥺',
 };
 
-// 💡 수정됨: 어떤 스펙이 오더라도 무조건 3번 풀도록 상수 고정
 const TOTAL_STEPS = 3; 
 
 export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
   const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
@@ -56,7 +54,6 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
     if (!spec) return;
     setTimeLeft(spec.time_limit_sec);
     setStep(0);
-    setAnswers([]);
     setSelected(null);
     setSubmitting(false);
     setImgLoaded(false);
@@ -80,7 +77,6 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
 
   if (!spec) return null;
 
-  // 💡 수정됨: 백엔드에서 문항이 부족하게 오더라도 에러가 나지 않도록 배열을 순환(Fallback) 참조
   const currentQ = spec.questions?.[step] || spec.questions?.[step % (spec.questions?.length || 1)];
   const isLastStep = step >= TOTAL_STEPS - 1;
   const canAdvance = selected != null && !submitting;
@@ -90,20 +86,35 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
     setSelected(emotion);
   };
 
+  // 💡 핵심 로직 수정: 개별 문항을 풀 때마다 백엔드로 즉시 점수를 전송하여 합산 처리단계를 거치도록 교정
   const handleNext = () => {
     if (!canAdvance) return;
+
+    // 현재 문항의 풀이 데이터 구조화
+    const currentAnswerPayload = {
+      step_index: step,
+      selected_emotion: selected,
+      time_taken_ms: Date.now() - startedAtRef.current,
+      is_final_step: isLastStep
+    };
+
     if (isLastStep) {
       setSubmitting(true);
+      // 마지막 3번째 시도 제출 시 전체 결과 트리거
       onSubmit({
-        submitted_answers: [...answers, selected],
-        behavioral_data: {
-          time_taken_ms: Date.now() - startedAtRef.current,
-        },
+        current_step_payload: currentAnswerPayload,
+        status: 'completed'
       });
     } else {
-      setAnswers((prev) => [...prev, selected]);
+      // 💡 첫 번째, 두 번째 시도 실패(혹은 통과) 시 데이터를 백엔드에 즉시 넘겨 점수를 누적시키고 다음 시도로 패스
+      onSubmit({
+        current_step_payload: currentAnswerPayload,
+        status: 'progressing'
+      });
+      
       setStep((s) => s + 1);
       setSelected(null);
+      startedAtRef.current = Date.now(); // 다음 문제를 위한 타이머 초기화
     }
   };
 
@@ -117,7 +128,6 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
           </div>
           <div>
             <div className="font-bold text-[15px] leading-tight">감정 맥락 추론 캡챠</div>
-            {/* 💡 수정됨: 사용자에게 명확히 3번 골라야 함을 안내 */}
             <div className="text-xs opacity-85 mt-0.5">사진을 보고 감정을 3번 골라주세요</div>
           </div>
         </div>
@@ -133,7 +143,7 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
       {/* Body */}
       <div className="px-6 pt-5">
         
-        {/* 💡 수정됨: 손전등 캡챠와 동일한 형태의 3단계 진행률(Progress) 바 적용 */}
+        {/* 3단계 시도 진행률 바 */}
         <div className="flex gap-2 mb-2">
           {[0, 1, 2].map((i) => (
             <div
@@ -149,7 +159,7 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
           ))}
         </div>
         <div className="text-xs text-[#8a96ad] mb-3 text-right">
-          진행 <span className="font-bold text-[#2563eb]">{step + 1}</span> / 3
+          시도 <span className="font-bold text-[#2563eb]">{step + 1}</span> / 3
         </div>
 
         {/* 현재 문제 이미지 */}
@@ -223,8 +233,8 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
           {submitting
             ? '제출 중…'
             : isLastStep
-            ? '제출하기'
-            : '다음 →'}
+            ? '최종 제출'
+            : '다음 시도 →'}
         </button>
 
         {/* 전체 남은 시간 */}
