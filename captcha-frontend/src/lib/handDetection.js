@@ -22,7 +22,7 @@ export const HAND_LANDMARK_COUNT = 21;
 // pinch 0.10~0.18, 펴기 spread 0.89~1.32 / pinch 0.47~1.05. fist·pinch 가 spread 에서
 // 겹쳐 우선순위(pinch→open→fist)로 분리한다. 조정 시 hand_evidence.py 도 함께 바꾼다.
 export const OPEN_TH = 0.80;   // spread > OPEN_TH → 손 폄
-export const FIST_TH = 0.75;   // spread < FIST_TH (그리고 pinch 아님) → 주먹
+export const FIST_TH = 0.79;   // spread < FIST_TH (그리고 pinch 아님) → 주먹
 export const PINCH_TH = 0.25;  // pinchRatio < PINCH_TH → 엄지-검지 붙음
 
 
@@ -85,7 +85,7 @@ const FINGER_LANDMARKS = {
   pinky: [17, 18, 19, 20],
 };
 // 폄 비율 임계 — 서버 hand_evidence.py 와 동일(단일 출처). TODO 실측 calibration.
-export const FINGER_EXTEND_RATIO = 1.5;
+export const FINGER_EXTEND_RATIO = 1.3;
 export const THUMB_EXTEND_RATIO = 1.5;
 
 /**

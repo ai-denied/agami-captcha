@@ -52,7 +52,7 @@ DIFFICULTY_PROFILES: Final[dict[Difficulty, dict]] = {
     Difficulty.EASY: {
         "instruction_count": 1,
         "hand_instruction_count": 1,
-        "duration_per_instruction_sec": 3,
+        "duration_per_instruction_sec": 2,
         "time_limit_sec": 30,
         "hint_after_sec": 12,
         "tolerance_sec": 1.5,

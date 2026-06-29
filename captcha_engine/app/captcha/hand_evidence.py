@@ -44,7 +44,7 @@ THUMB_TIP = 4
 # pinch 0.10~0.18, 펴기 spread 0.89~1.32 / pinch 0.47~1.05. fist·pinch 가 spread 에서
 # 겹쳐 우선순위(pinch→open→fist)로 분리한다. 조정 시 handDetection.js 도 함께 바꾼다.
 OPEN_TH = 0.80    # spread > OPEN_TH → 손 폄
-FIST_TH = 0.75    # spread < FIST_TH (그리고 pinch 아님) → 주먹
+FIST_TH = 0.79    # spread < FIST_TH (그리고 pinch 아님) → 주먹
 PINCH_TH = 0.25   # pinch_ratio < PINCH_TH → 엄지-검지 붙음
 
 # 유효(식 산출 가능) 프레임이 이보다 적으면 검증 실패 (face_evidence 와 동일 floor).
@@ -149,7 +149,7 @@ FINGER_LANDMARKS: dict[str, tuple[int, int, int, int]] = {
 # 폄 판정 비율: dist(TIP, MCP) > RATIO * dist(PIP, MCP) → 폄.
 # TODO(실측 calibration): 추정 기본값. [fingers] 로그로 실제 분포 확인 후 확정.
 # 엄지는 기하가 달라(아래 docstring 분석) 별도 임계로 분리해 둔다.
-FINGER_EXTEND_RATIO = 1.5
+FINGER_EXTEND_RATIO = 1.3
 THUMB_EXTEND_RATIO = 1.5
 
 
