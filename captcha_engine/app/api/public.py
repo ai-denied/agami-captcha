@@ -430,11 +430,9 @@ async def _flashlight_submit_bundle(
         "risk_bands": risk_bands,
         "coord_hits": coord_hits,
         "decision": decision,
-        "risk_score": risk_score,   # 추가
     })
     verdict = "human" if decision == "allow" else "bot"
     confidence = max(scores) if scores else 0.0
-    risk_score = round(confidence * 100)
 
     # 차단(success=false) 시 공격 유형 라벨 부여. scores 는 bot_risk_score(높을수록 봇)
     # 이므로 위험 방향은 score >= HIGH_RISK_THRESHOLD. evaluate_flashlight_decision 의
