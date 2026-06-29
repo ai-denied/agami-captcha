@@ -3,10 +3,6 @@ import { detectInstruction, extractEvidence } from '../lib/faceDetection';
 import { detectHandGesture, extractHandEvidence, toUserHand, isFingerExtended, fingersMatch } from '../lib/handDetection';
 import FishTimer from './FishTimer';
 
-// =============================================================================
-// MediaPipe 라이브러리 CDN 로딩
-// =============================================================================
-
 const g = /** @type {any} */ (globalThis);
 
 const MP_CDN_SCRIPTS = [
@@ -68,10 +64,6 @@ function loadMediaPipe() {
   return built;
 }
 
-// =============================================================================
-// 안면 미션 캡챠 (MediaPipe Face Mesh 기반 실시간 자동 감지)
-// =============================================================================
-
 const ICON_FOR = {
   blink_left: '👁️',
   blink_right: '👁️',
@@ -104,13 +96,13 @@ const EVIDENCE_FPS = 15;
 const EVIDENCE_MIN_INTERVAL_MS = 1000 / EVIDENCE_FPS;
 const MAX_EVIDENCE_FRAMES = 150; 
 
+// 💡 수정됨: 안면 미션 단계를 3개로 고정하기 위한 상수 선언
+const FIXED_TOTAL_STEPS = 3;
 
 export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded = false }) {
-  // DOM
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  // MediaPipe 인스턴스
   const faceMeshRef = useRef(null);
   const cameraRef = useRef(null);
   const handsRef = useRef(null); 
@@ -126,7 +118,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   const faceAllDoneRef = useRef(false); 
   const handAllDoneRef = useRef(false); 
 
-  // 콜백/상태 미러 ref
   const onSubmitRef = useRef(onSubmit);
   const specRef = useRef(spec);
   const instructionIdxRef = useRef(0);
@@ -139,7 +130,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   const evidenceRef = useRef([]); 
   const lastEvidenceAtRef = useRef(0); 
 
-  // 렌더 트리거용 상태
   const [detectionStatus, setDetectionStatus] = useState('initializing');
   const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
   const [progressFraction, setProgressFraction] = useState(0);
@@ -322,7 +312,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       completed_instructions: [...completedRef.current],
       face_behavioral_data: {
         time_taken_ms: Date.now() - startedAtRef.current,
-        steps_count: currentSpec.instructions.length,
+        steps_count: FIXED_TOTAL_STEPS, // 💡 수정됨: 고정 상수 반영
         evidence_version: 1,
         frame_w: CAMERA_WIDTH,
         frame_h: CAMERA_HEIGHT,
@@ -363,7 +353,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     }
 
     const idx = handIdxRef.current;
-    const inst = handInsts[idx];
+    // 💡 수정됨: 순환 방어 코드 적용
+    const inst = handInsts[idx] || handInsts[idx % handInsts.length];
     if (!inst) {
       handAllDoneRef.current = true;
       maybeSubmit();
@@ -428,7 +419,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
         if (evEntry) evEntry.completed_at_t = nowMs;
         handProgressStartedAtRef.current = null;
         const nextIdx = idx + 1;
-        if (nextIdx >= handInsts.length) {
+        // 💡 수정됨: 손 미션 종료 판정도 FIXED_TOTAL_STEPS 상수 기준 처리
+        if (nextIdx >= FIXED_TOTAL_STEPS) {
           handAllDoneRef.current = true;
           maybeSubmit();
         } else {
@@ -468,7 +460,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     if (noseHistoryRef.current.length > 60) noseHistoryRef.current.shift();
 
     const idx = instructionIdxRef.current;
-    const inst = currentSpec.instructions[idx];
+    // 💡 수정됨: 순환 방어 코드 적용
+    const inst = currentSpec.instructions[idx] || currentSpec.instructions[idx % currentSpec.instructions.length];
 
     drawMesh(ctx, lm, inst?.type);
     ctx.restore();
@@ -508,7 +501,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
         setDetectionStatus('instruction_complete');
 
         const nextIdx = idx + 1;
-        if (nextIdx >= currentSpec.instructions.length) {
+        // 💡 수정됨: FIXED_TOTAL_STEPS 단계 기준 종료 게이팅 처리
+        if (nextIdx >= FIXED_TOTAL_STEPS) {
           faceAllDoneRef.current = true;
           maybeSubmit();
         } else {
@@ -530,13 +524,12 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
   if (!spec) return null;
 
-  const totalSteps = spec.instructions.length;
-  const currentInstruction = spec.instructions[currentInstructionIndex];
-  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; 
+  // 💡 수정됨: 내부 지시문 배열 강제 순환 가드 매핑
+  const currentInstruction = spec.instructions[currentInstructionIndex] || spec.instructions[currentInstructionIndex % spec.instructions.length];
+  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] || spec.hand_instructions?.[currentHandIndex % (spec.hand_instructions?.length || 1)] || null; 
   const isCompleteFlash = detectionStatus === 'instruction_complete';
 
   return (
-    // 💡 변경점: 테두리와 그림자를 생성하던 cardEdge 로직을 완전히 제거하고, 손전등 캡챠와 동일한 기본 외형으로 수정했습니다.
     <div className="w-full max-w-[520px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
@@ -566,7 +559,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             진행 상태
           </div>
           <div className="text-sm font-bold text-[#1d2a44] tabular-nums">
-            {Math.min(currentInstructionIndex + 1, totalSteps)}<span className="text-[#8a96ad]">/{totalSteps}</span> 단계
+            {/* 💡 수정됨: FIXED_TOTAL_STEPS 적용 */}
+            {Math.min(currentInstructionIndex + 1, FIXED_TOTAL_STEPS)}<span className="text-[#8a96ad]">/{FIXED_TOTAL_STEPS}</span> 단계
           </div>
         </div>
 
