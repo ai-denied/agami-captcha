@@ -91,7 +91,7 @@ function buildSrc(kind, sitekey, wid, theme) {
   parts.push('host=' + encodeURIComponent(location.origin));
   parts.push('theme=' + encodeURIComponent(theme || 'light')); 
   
-  // 💡 [핵심 조치] Iframe 캐시 트랩을 방지하기 위해 호출 시점의 고유 타임스탬프 추가
+  // [핵심 조치] Iframe 캐시 트랩을 방지하기 위해 호출 시점의 고유 타임스탬프 추가
   parts.push('_cb=' + new Date().getTime());
 
   return EMBED_BASE + '?' + parts.join('&');
@@ -113,7 +113,7 @@ function removeEl(el) {
 }
 
 // -----------------------------------------------------------------------------
-// [핵심] 트리거 버튼 생성 (클릭 시 파란 테두리 애니메이션 작동)
+// 트리거 버튼 생성
 // -----------------------------------------------------------------------------
 function makeTrigger(onClick, theme) {
   var dark = theme === 'dark';
@@ -141,7 +141,7 @@ function makeTrigger(onClick, theme) {
     'border-radius:12px;' +
     'position:relative;' +
     'overflow:hidden;' +
-    'border:1px solid #d1d5db;' +   // 항상 회색 테두리
+    'border:1px solid #d1d5db;' +
     'background:' + (dark ? '#23262e' : '#fff') + ';';
   
   var iconBg = dark ? 'rgba(91,139,247,.16)' : 'rgba(91,139,247,.12)';
@@ -157,7 +157,7 @@ function makeTrigger(onClick, theme) {
     '<span style="flex:1;font:700 16px system-ui,-apple-system,sans-serif;color:' + labelColor + ';">사람인지 확인</span>';
 
   b.onclick = function() {
-    b.querySelector('.agami-spinner').style.display = 'block'; // 스피너 시작
+    b.querySelector('.agami-spinner').style.display = 'block';
     onClick();
   };
   return b;
@@ -176,7 +176,7 @@ function setStatus(w, msg) {
 }
 
 // -----------------------------------------------------------------------------
-// [핵심] 성공 UI (버튼과 동일한 규격 유지, pass.png 경로 올바르게 적용)
+// 성공 UI
 // -----------------------------------------------------------------------------
 function makeVerified(theme) {
   var dark = theme === 'dark';
@@ -207,7 +207,7 @@ function removeVerified(w) {
 }
 
 // -----------------------------------------------------------------------------
-// [핵심] 실패 UI (버튼과 동일한 규격 유지, fail.png 경로 올바르게 적용)
+// 실패 UI
 // -----------------------------------------------------------------------------
 function makeFailed(w, errMsg) {
   var dark = w.theme === 'dark';
@@ -254,7 +254,7 @@ function removeIframe(w) {
 }
 
 // -----------------------------------------------------------------------------
-// [핵심] 네이티브 모달 (초기 opacity:0 으로 숨겨서 로딩 중 안 보이게 함)
+// 네이티브 모달
 // -----------------------------------------------------------------------------
 function mountIframe(w) {
   var overlay = document.createElement('div');
@@ -297,7 +297,6 @@ function onMessage(event) {
 
   switch (data.type) {
     case 'agami-ready': 
-      // [핵심] 챌린지 준비 완료 시 오버레이를 서서히 보여주고, 버튼 애니메이션 중지
       if (w.overlay) {
         w.overlay.style.opacity = '1';
         w.overlay.style.pointerEvents = 'auto';
@@ -322,10 +321,43 @@ function onMessage(event) {
         w.phase = 'verified';
         setStatus(w, '확인되었습니다');
       } else {
-        var errMsg = (data.error && data.error.message) ? data.error.message : '확인에 실패했습니다.';
-        showFailed(w, errMsg); 
+        // 💡 [핵심 조치] 영문 에러 메시지 번역 및 코드 매핑 로직 추가
+        var finalErrMsg = '확인에 실패했습니다. 다시 시도해주세요.';
+        
+        if (data.error) {
+          var code = data.error.code;
+          var msg = data.error.message || '';
+          
+          var ERROR_MAP = {
+            'model_high_risk': 'AI 탐지 (위험 점수)',
+            'no_trajectory': '궤적 자체 누락',
+            'coordinate_brute': '좌표 단순 실패', 
+            'empty_trajectory': '빈 궤적 (Fail-closed)',
+            'missing_canvas_dims': '캔버스 규격 누락',
+            'inference_unavailable': '추론 API 연결 실패',
+            'camera_bypass': '카메라 우회 시도',
+            'face_spoofing': '얼굴 위변조 의심',
+            'gesture_mismatch': '제스처 불일치',
+            'liveness_fail': '라이브니스 검증 실패',
+            'abnormal_fps': '비정상 프레임 레이트',
+            'random_guessing': '무작위 대입 시도',
+            'solve_speed_anomaly': '비정상적인 풀이 속도',
+            'pattern_abuse': '패턴 남용 시도'
+          };
+
+          if (code && ERROR_MAP[code]) {
+            finalErrMsg = ERROR_MAP[code] + ' (' + code + ')';
+          } else if (msg.toLowerCase().indexOf('failed') !== -1 || msg.toLowerCase().indexOf('try again') !== -1) {
+            // 백엔드 기본 영문 에러 메시지 번역 처리
+            finalErrMsg = '캡챠 검증에 실패했습니다. 다시 시도해주세요.';
+          } else if (msg) {
+            finalErrMsg = msg;
+          }
+        }
+
+        showFailed(w, finalErrMsg); 
         w.phase = 'failed';
-        setStatus(w, '확인에 실패했습니다: ' + errMsg);
+        setStatus(w, '확인에 실패했습니다: ' + finalErrMsg);
       }
       break;
 
