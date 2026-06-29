@@ -40,6 +40,9 @@ const EMOTION_ICON = {
   yearning: '🥺',
 };
 
+// 💡 수정됨: 어떤 스펙이 오더라도 무조건 3번 풀도록 상수 고정
+const TOTAL_STEPS = 3; 
+
 export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
   const [step, setStep] = useState(0);
@@ -77,9 +80,9 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
 
   if (!spec) return null;
 
-  const total = spec.total_count ?? (spec.questions?.length ?? 0);
-  const currentQ = spec.questions?.[step];
-  const isLastStep = step >= total - 1;
+  // 💡 수정됨: 백엔드에서 문항이 부족하게 오더라도 에러가 나지 않도록 배열을 순환(Fallback) 참조
+  const currentQ = spec.questions?.[step] || spec.questions?.[step % (spec.questions?.length || 1)];
+  const isLastStep = step >= TOTAL_STEPS - 1;
   const canAdvance = selected != null && !submitting;
 
   const handlePick = (emotion) => {
@@ -104,10 +107,7 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
     }
   };
 
-  const stepPct = ((step + 1) / total) * 100;
-
   return (
-    // 💡 핵심 조치: max-w-[480px]를 520px로 확장하여 iframe 화면에 꽉 차도록 여백 제거
     <div className="w-full max-w-[520px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
@@ -117,7 +117,8 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
           </div>
           <div>
             <div className="font-bold text-[15px] leading-tight">감정 맥락 추론 캡챠</div>
-            <div className="text-xs opacity-85 mt-0.5">사진을 보고 감정을 골라주세요</div>
+            {/* 💡 수정됨: 사용자에게 명확히 3번 골라야 함을 안내 */}
+            <div className="text-xs opacity-85 mt-0.5">사진을 보고 감정을 3번 골라주세요</div>
           </div>
         </div>
         <div className="flex items-center gap-2 bg-white/20 px-4 py-1.5 rounded-full">
@@ -131,20 +132,24 @@ export default function ImageGridCaptcha({ spec, onSubmit, onRefresh, status, er
 
       {/* Body */}
       <div className="px-6 pt-5">
-        {/* 단계 표시 */}
-        <div className="flex items-center justify-between mb-2.5">
-          <div className="text-xs text-[#8a96ad] font-semibold uppercase tracking-wide">
-            진행 상태
-          </div>
-          <div className="text-sm font-bold text-[#1d2a44] tabular-nums">
-            문제 {step + 1}<span className="text-[#8a96ad]"> / {total}</span>
-          </div>
+        
+        {/* 💡 수정됨: 손전등 캡챠와 동일한 형태의 3단계 진행률(Progress) 바 적용 */}
+        <div className="flex gap-2 mb-2">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className={`flex-1 h-1.5 rounded-full transition-colors ${
+                i < step
+                  ? 'bg-[#4a8bff]'
+                  : i === step
+                  ? 'bg-[#9ec3ff]'
+                  : 'bg-[#e0e7f3]'
+              }`}
+            />
+          ))}
         </div>
-        <div className="mb-4 w-full h-1.5 bg-[#f0f4fb] rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-[#4a8bff] to-[#7aa9ff] rounded-full transition-all duration-300"
-            style={{ width: `${stepPct}%` }}
-          />
+        <div className="text-xs text-[#8a96ad] mb-3 text-right">
+          진행 <span className="font-bold text-[#2563eb]">{step + 1}</span> / 3
         </div>
 
         {/* 현재 문제 이미지 */}
