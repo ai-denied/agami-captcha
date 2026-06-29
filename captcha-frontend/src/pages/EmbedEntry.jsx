@@ -19,6 +19,29 @@ const DIFFICULTY_MAP = {
   hard: 'hard',
 };
 
+// 💡 추가됨: 대시보드와 동일한 명칭을 위젯 에러 화면에도 표시하기 위한 통합 맵핑 테이블
+const ERROR_TYPE_MAP = {
+  // 공통 및 손전등 (flashlight)
+  'model_high_risk': 'AI 탐지 (위험 점수)',
+  'no_trajectory': '궤적 자체 누락',
+  'coordinate_brute': '좌표 단순 실패', 
+  'empty_trajectory': '빈 궤적 (Fail-closed)',
+  'missing_canvas_dims': '캔버스 규격 누락',
+  'inference_unavailable': '추론 API 연결 실패',
+  
+  // 안면 인식 + 손 미션 (face_mission)
+  'camera_bypass': '카메라 우회 시도',
+  'face_spoofing': '얼굴 위변조 의심',
+  'gesture_mismatch': '제스처 불일치',
+  'liveness_fail': '라이브니스 검증 실패',
+  'abnormal_fps': '비정상 프레임 레이트',
+  
+  // 감정 맥락 추론 (context_inference)
+  'random_guessing': '무작위 대입 시도',
+  'solve_speed_anomaly': '비정상적인 풀이 속도',
+  'pattern_abuse': '패턴 남용 시도'
+};
+
 export default function EmbedEntry() {
   const [searchParams] = useSearchParams();
   const rawKind = (searchParams.get('kind') ?? 'flashlight').toLowerCase();
@@ -211,7 +234,7 @@ export default function EmbedEntry() {
           />
         )}
 
-        {/* 팀원 연동/테스트를 위한 성공 화면 DOM */}
+        {/* 성공 화면 DOM */}
         {status === 'success' && (
           <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8`}>
             <div className="flex items-center gap-3">
@@ -224,15 +247,19 @@ export default function EmbedEntry() {
           </div>
         )}
 
-        {/* 팀원 연동/테스트를 위한 실패 화면 DOM */}
+        {/* 실패 화면 DOM */}
         {status === 'fail' && (
           <div className={`mx-auto w-full max-w-[640px] rounded-3xl ${bgColor} p-8`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-2xl">❌</div>
               <div>
                 <div className={`text-lg font-bold ${textColor}`}>검증 실패</div>
+                
+                {/* 💡 수정됨: error.code가 매핑 테이블에 존재하면 해당 한글 명칭 출력, 없으면 기본 메시지 폴백 */}
                 <div className="text-xs text-[#6b7891]">
-                  {error?.message || '알 수 없는 오류'}
+                  {error?.code && ERROR_TYPE_MAP[error.code] 
+                    ? ERROR_TYPE_MAP[error.code] 
+                    : (error?.message || '알 수 없는 오류')}
                   {error?.code ? <span className="text-rose-500 ml-1">({error.code})</span> : null}
                 </div>
               </div>
