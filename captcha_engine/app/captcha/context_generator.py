@@ -50,7 +50,7 @@ from app.captcha.challenge_types import (
 
 DIFFICULTY_PROFILES: Final[dict[Difficulty, dict]] = {
     Difficulty.EASY: {
-        "question_count": 2,
+        "question_count": 3,
         "time_limit_sec": 30,
         "hint_after_sec": 12,
     },

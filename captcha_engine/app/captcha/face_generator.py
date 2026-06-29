@@ -50,8 +50,8 @@ from app.captcha.challenge_types import (
 # 뿐이며, medium/hard 의 escalation 은 EASY 하드코드 해제 시 함께 의미를 갖는다.
 DIFFICULTY_PROFILES: Final[dict[Difficulty, dict]] = {
     Difficulty.EASY: {
-        "instruction_count": 1,
-        "hand_instruction_count": 1,
+        "instruction_count": 3,
+        "hand_instruction_count": 3,
         "duration_per_instruction_sec": 2,
         "time_limit_sec": 30,
         "hint_after_sec": 12,
