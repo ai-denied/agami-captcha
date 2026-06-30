@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+asyncpg://captcha:captcha@localhost:5432/captcha"
     )
-    db_pool_size: int = Field(default=10)
-    db_max_overflow: int = Field(default=10)
+    db_pool_size: int = Field(default=40)
+    db_max_overflow: int = Field(default=20)
 
     # -----------------------------------------------------------------------
     # Redis
