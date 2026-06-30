@@ -65,31 +65,50 @@ def _client_factory(handler):
 
 
 # ---------------------------------------------------------------------------
-# grade : 집계 + fail-closed
+# grade : 점수 합산(sum(score) >= 2.5) + fail-closed  (3문항, max 3.0)
 # ---------------------------------------------------------------------------
 
+def _attempt_by_label(score_map: dict, default: float = 0.0):
+    """라벨 → score 매핑으로 attempt 를 모킹하는 async 함수."""
+    async def fake_attempt(session_id, ecid, label, ms):
+        return score_map.get(label, default)
+    return fake_attempt
+
+
+def test_grade_sum_at_threshold_is_hit():
+    # 1.0 + 1.0 + 0.5 = 2.5 >= 2.5 → 통과 (부분점수 포함 경계)
+    answer = _mk_answer(3)
+    with mock.patch.object(context_client, "attempt",
+                           _attempt_by_label({"a": 1.0, "b": 1.0, "c": 0.5})):
+        assert asyncio.run(context_client.grade(answer, ["a", "b", "c"], 100)) is True
+
+
 def test_grade_all_correct_is_hit():
-    answer = _mk_answer(2)
-
-    async def fake_attempt(session_id, ecid, label, ms):
-        return True
-
-    with mock.patch.object(context_client, "attempt", fake_attempt):
-        assert asyncio.run(context_client.grade(answer, ["ok", "ok"], 100)) is True
+    # 1.0 * 3 = 3.0 → 통과
+    answer = _mk_answer(3)
+    with mock.patch.object(context_client, "attempt",
+                           _attempt_by_label({"a": 1.0, "b": 1.0, "c": 1.0})):
+        assert asyncio.run(context_client.grade(answer, ["a", "b", "c"], 100)) is True
 
 
-def test_grade_one_wrong_is_miss():
-    answer = _mk_answer(2)
+def test_grade_two_correct_below_threshold_is_miss():
+    # 1.0 + 1.0 + 0.0 = 2.0 < 2.5 → 실패 (2문항 정답으론 부족)
+    answer = _mk_answer(3)
+    with mock.patch.object(context_client, "attempt",
+                           _attempt_by_label({"a": 1.0, "b": 1.0, "c": 0.0})):
+        assert asyncio.run(context_client.grade(answer, ["a", "b", "c"], 100)) is False
 
-    async def fake_attempt(session_id, ecid, label, ms):
-        return label == "ok"
 
-    with mock.patch.object(context_client, "attempt", fake_attempt):
-        assert asyncio.run(context_client.grade(answer, ["ok", "no"], 100)) is False
+def test_grade_partials_below_threshold_is_miss():
+    # 1.0 + 0.5 + 0.5 = 2.0 < 2.5 → 실패
+    answer = _mk_answer(3)
+    with mock.patch.object(context_client, "attempt",
+                           _attempt_by_label({"a": 1.0, "b": 0.5, "c": 0.5})):
+        assert asyncio.run(context_client.grade(answer, ["a", "b", "c"], 100)) is False
 
 
 def test_grade_length_mismatch_is_miss():
-    answer = _mk_answer(2)
+    answer = _mk_answer(3)
 
     async def boom(*a, **k):  # must NOT be called
         raise AssertionError("attempt should not run on length mismatch")
@@ -99,42 +118,78 @@ def test_grade_length_mismatch_is_miss():
 
 
 def test_grade_none_submitted_is_miss():
-    answer = _mk_answer(2)
+    answer = _mk_answer(3)
     assert asyncio.run(context_client.grade(answer, None, 100)) is False
 
 
 def test_grade_attempt_exception_fails_closed():
-    answer = _mk_answer(2)
+    # 한 문항 예외 → 0.0 흡수. 나머지 1.0+1.0=2.0 < 2.5 → 실패
+    answer = _mk_answer(3)
 
-    async def boom(*a, **k):
-        raise RuntimeError("upstream blew up")
+    async def fake_attempt(session_id, ecid, label, ms):
+        if label == "boom":
+            raise RuntimeError("upstream blew up")
+        return 1.0
 
-    with mock.patch.object(context_client, "attempt", boom):
-        # gather(return_exceptions=True) + (r is True) → 예외는 통과 아님
-        assert asyncio.run(context_client.grade(answer, ["a", "b"], 100)) is False
+    with mock.patch.object(context_client, "attempt", fake_attempt):
+        assert asyncio.run(context_client.grade(answer, ["x", "y", "boom"], 100)) is False
 
 
 # ---------------------------------------------------------------------------
-# attempt : httpx 매핑 + fail-closed
+# attempt : score 매핑 + 하위호환(fallback) + fail-closed
 # ---------------------------------------------------------------------------
 
-def test_attempt_maps_is_correct_true():
+def test_attempt_returns_score_field():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/context-emotion/attempt"
         body = json.loads(request.content)
         assert body["session_id"] == "s" and body["challenge_id"] == "e" and body["selected_label"] == "ok"
+        return httpx.Response(200, json={"is_correct": True, "retry_allowed": False, "score": 1.0})
+
+    with mock.patch("httpx.AsyncClient", _client_factory(handler)):
+        assert asyncio.run(context_client.attempt("s", "e", "ok", 100)) == 1.0
+
+
+def test_attempt_partial_score_half():
+    # 동일 감정그룹 → 0.5 (is_correct=False 여도 score 우선)
+    def handler(request):
+        return httpx.Response(200, json={"is_correct": False, "retry_allowed": True, "score": 0.5})
+
+    with mock.patch("httpx.AsyncClient", _client_factory(handler)):
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 0.5
+
+
+def test_attempt_zero_score():
+    def handler(request):
+        return httpx.Response(200, json={"is_correct": False, "retry_allowed": True, "score": 0.0})
+
+    with mock.patch("httpx.AsyncClient", _client_factory(handler)):
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 0.0
+
+
+def test_attempt_score_clamped_to_unit():
+    def handler(request):
+        return httpx.Response(200, json={"score": 9.0})  # 비정상값 → [0,1] 클램프
+
+    with mock.patch("httpx.AsyncClient", _client_factory(handler)):
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 1.0
+
+
+def test_attempt_fallback_is_correct_true_when_score_absent():
+    # score 미수신(지수님 배포 전) + is_correct=true → 1.0 환산
+    def handler(request):
         return httpx.Response(200, json={"is_correct": True, "retry_allowed": False})
 
     with mock.patch("httpx.AsyncClient", _client_factory(handler)):
-        assert asyncio.run(context_client.attempt("s", "e", "ok", 100)) is True
+        assert asyncio.run(context_client.attempt("s", "e", "ok", 100)) == 1.0
 
 
-def test_attempt_maps_is_correct_false():
+def test_attempt_fallback_is_correct_false_when_score_absent():
     def handler(request):
         return httpx.Response(200, json={"is_correct": False, "retry_allowed": True})
 
     with mock.patch("httpx.AsyncClient", _client_factory(handler)):
-        assert asyncio.run(context_client.attempt("s", "e", "no", 100)) is False
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 0.0
 
 
 def test_attempt_http_500_fails_closed():
@@ -142,7 +197,7 @@ def test_attempt_http_500_fails_closed():
         return httpx.Response(500, json={"detail": "boom"})
 
     with mock.patch("httpx.AsyncClient", _client_factory(handler)):
-        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) is False
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 0.0
 
 
 def test_attempt_410_fails_closed():
@@ -150,7 +205,7 @@ def test_attempt_410_fails_closed():
         return httpx.Response(410, json={"detail": "expired"})
 
     with mock.patch("httpx.AsyncClient", _client_factory(handler)):
-        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) is False
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 0.0
 
 
 def test_attempt_connect_error_fails_closed():
@@ -158,7 +213,7 @@ def test_attempt_connect_error_fails_closed():
         raise httpx.ConnectError("refused")
 
     with mock.patch("httpx.AsyncClient", _client_factory(handler)):
-        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) is False
+        assert asyncio.run(context_client.attempt("s", "e", "x", 100)) == 0.0
 
 
 # ---------------------------------------------------------------------------
