@@ -45,12 +45,8 @@ from app.captcha.verifier import (
     baseline_verdict,
     check_flashlight_hit,
 )
-from app.captcha.face_evidence import FaceEvidence, check_face_evidence
-from app.captcha.hand_evidence import check_hand_evidence
-from app.captcha.face_inference_client import (
-    build_x_seq_from_evidence,
-    predict_face_spoof,
-)
+from app.captcha.face_decision_adapter import build_rounds
+from app.captcha.captcha_decision import decide_three_round_captcha
 from app.core.config import get_settings
 from app.core.security import (
     hash_secret,
@@ -176,6 +172,7 @@ async def submit_answer(
     # 2. kind 별 검증 분기. baseline_verdict 는 동일하게 사용 (#44 가 교체).
     #    답안은 위에서 GETDEL 로 이미 Redis 에서 제거됨 → 오답이어도 챌린지는 폐기됨
     #    (flashlight 와 동일한 1회용 정책).
+    face_decision = None  # face_mission 3라운드 누적 판정 결과(관찰 기록용). 비-face 는 None.
     if answer.kind == ChallengeKind.FLASHLIGHT:
         if not body.flashlight_submissions or len(body.flashlight_submissions) != 3:
             raise HTTPException(
@@ -197,60 +194,23 @@ async def submit_answer(
             settings=settings,
         )
     elif answer.kind == ChallengeKind.FACE_MISSION:
-        # A2: 위젯이 보낸 원시 랜드마크 증거(face_behavioral_data.face_evidence)를 서버가
-        # 위젯 식(EAR/yaw/smile/nod)으로 재검증. 라벨 echo(check_face_hit) 대체 — echo 우회 차단.
-        hit = check_face_evidence(answer, body.face_behavioral_data)
-
-        # A3: 같은 face_mission 챌린지의 손동작 증거(hand_evidence)를 병렬 검증해 AND 결합.
-        # 현 정책상 모든 face_mission 은 hand 지시를 발급한다(issue 단계가 EASY 하드코드이고
-        # 세 난이도 프로필 모두 hand_instruction_count >= 2). 따라서 expected_hand 가 비어있는
-        # 답안은 구버전/비정상 토큰이므로 fail-closed 로 차단한다 — check_hand_evidence 의
-        # 하위호환(빈 expected -> True)이 face-only 자동통과로 새는 것을 호출부에서 막는다.
-        if not answer.expected_hand_instruction_types:
-            hit = False
-        else:
-            hand_hit = check_hand_evidence(answer, body.face_behavioral_data)
-            hit = hit and hand_hit
-
-        # --- 관찰 단계: face-liveness /predict 호출 (verdict 미반영) ---------------
-        # A2 hit 이 verdict 를 결정한다. 본 호출의 spoof_score 는 logger.info 에만
-        # 기록되며 응답 흐름/검증 결과에 영향을 주지 않는다. 추출/예측 실패는
-        # logger.warning 으로만 남기고 모두 흡수한다(분포 검증 전 단계, fail-closed 아님).
-        try:
-            if body.face_behavioral_data is not None:
-                ev = FaceEvidence.model_validate(body.face_behavioral_data)
-                for inst in ev.face_evidence.instructions:
-                    built = build_x_seq_from_evidence(
-                        inst.frames, ev.frame_w, ev.frame_h
-                    )
-                    if built is None:
-                        logger.info(
-                            "face_liveness_observe skipped (no x_seq) "
-                            "challenge_id=%s instruction=%s frames=%d",
-                            challenge_id, inst.type, len(inst.frames),
-                        )
-                        continue
-                    x_seq, seq_length, info = built
-                    pred = await predict_face_spoof(x_seq, seq_length)
-                    logger.info(
-                        "face_liveness_observe challenge_id=%s instruction=%s "
-                        "spoof_score=%s risk_band=%s is_spoof=%s seq_length=%d "
-                        "face_detect_rate=%.3f used_real_timestamps=%s",
-                        challenge_id,
-                        inst.type,
-                        None if pred is None else pred.get("spoof_score"),
-                        None if pred is None else pred.get("risk_band"),
-                        None if pred is None else pred.get("is_spoof"),
-                        seq_length,
-                        float(info.get("face_detect_rate", 0.0)),
-                        bool(info.get("used_real_timestamps", False)),
-                    )
-        except Exception:
-            logger.warning(
-                "face_liveness_observe failed (verdict unaffected) challenge_id=%s",
-                challenge_id, exc_info=True,
-            )
-        # --- 관찰 단계 끝 ----------------------------------------------------------
+        # Phase 3(쌍 구조 누적 판정): 위젯이 1회 제출한 evidence(얼굴3+손3)를 쌍 3개
+        # MissionRound 로 변환해 모델팀 decide_three_round_captcha 로 PASS/RETRY/FAIL 산출.
+        #  · mission_pass_i = (얼굴 미션 i 통과) AND (손 미션 i 통과) — 라운드 ≤1개 실패 허용.
+        #  · spoof 서비스 미연동 → spoof_score=0.0(real_safe). face_detected 는 검출률 게이트.
+        #  · 빈 expected_hand(구버전/비정상)·파싱오류·시퀀스 불일치는 어댑터에서 fail-closed.
+        # PASS 만 hit=True(토큰 발급), RETRY/FAIL 은 hit=False(422) — 하류 경로 그대로 재사용.
+        face_decision = decide_three_round_captcha(
+            build_rounds(answer, body.face_behavioral_data)
+        )
+        hit = face_decision.decision == "PASS"
+        logger.info(
+            "face_decision challenge_id=%s decision=%s reason=%s total_risk=%.2f "
+            "failed_mission=%d failed_face=%d spoof_detected=%d",
+            challenge_id, face_decision.decision, face_decision.reason,
+            face_decision.total_risk, face_decision.failed_mission_count,
+            face_decision.failed_face_count, face_decision.spoof_detected_count,
+        )
     elif answer.kind == ChallengeKind.CONTEXT_INFERENCE:
         if body.submitted_answers is None:
             raise HTTPException(
@@ -285,6 +245,17 @@ async def submit_answer(
 
     # 4. 검증 결과를 Postgres 에 기록 (대시보드 통계의 원천)
     behavioral_summary = body.behavioral_data.model_dump() if body.behavioral_data else None
+    # face_mission: 3라운드 누적 판정 메타를 summary 에 남긴다(관찰용 — RETRY 비율/리스크 추적).
+    # verdict 컬럼은 human/bot 의미를 유지하고, 3-상태(PASS/RETRY/FAIL)는 여기 기록한다.
+    if face_decision is not None:
+        behavioral_summary = {
+            "face_decision": face_decision.decision,
+            "reason": face_decision.reason,
+            "total_risk": face_decision.total_risk,
+            "failed_mission_count": face_decision.failed_mission_count,
+            "failed_face_count": face_decision.failed_face_count,
+            "spoof_detected_count": face_decision.spoof_detected_count,
+        }
     db.add(Verification(
         challenge_id=challenge_id,
         tenant_id=api_key.tenant_id,
