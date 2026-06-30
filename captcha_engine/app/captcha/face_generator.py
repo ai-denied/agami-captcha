@@ -55,7 +55,7 @@ DIFFICULTY_PROFILES: Final[dict[Difficulty, dict]] = {
         "duration_per_instruction_sec": 2,
         "time_limit_sec": 30,
         "hint_after_sec": 12,
-        "tolerance_sec": 1.5,
+        "tolerance_sec": 0.6,  # 검증 윈도우 ±0.6s(1.2s) — 과거 1.5s(3s)는 미션 무관 프레임 우연매칭 허용
     },
     Difficulty.MEDIUM: {
         "instruction_count": 2,
