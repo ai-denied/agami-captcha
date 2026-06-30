@@ -8,8 +8,10 @@ Hand Mission 서버측 손동작 기하 검증 (A3)
 좌표 컨벤션: ``landmarks`` 는 ``dict[str, [x, y]]`` (정규화 0~1). 손 크기로 정규화해
 캡처 거리/해상도에 둔감하게 만든다.
 
-검증 강도: face 의 transition 검증(도달+복귀)보다 가벼운 **존재 검증** —
-window 안에 임계를 만족하는 프레임이 1개라도 있으면 통과(명세 [3]).
+검증 강도: face 의 transition 검증(도달+복귀)보다 가벼운 **지속 검증** —
+window 안에 임계를 만족하는 프레임이 GESTURE_MATCH_FRAMES 개 이상이면 통과.
+(과거 명세 [3]는 1프레임 '존재'만으로 통과했으나, "대충 스침" 통과를 막기 위해
+ finger_pose 의 FINGER_MATCH_FRAMES 와 같은 '지속' 기준으로 강화했다.)
 
 모든 검증은 **fail-closed**: 파싱 실패 / 증거 부족 / 식 산출 불가 → False.
 단, hand 를 요구하지 않는 챌린지(expected_hand_instruction_types 가 빔)는
@@ -49,6 +51,13 @@ PINCH_TH = 0.25   # pinch_ratio < PINCH_TH → 엄지-검지 붙음
 
 # 유효(식 산출 가능) 프레임이 이보다 적으면 검증 실패 (face_evidence 와 동일 floor).
 MIN_VALID_FRAMES = 5
+
+# 제스처(open/fist/pinch) 존재검증의 '지속' 임계 — window 안에 조건을 만족하는 프레임이
+# 이 개수 이상이어야 통과한다. 과거엔 1프레임(any)만 맞아도 통과해 "대충 스침"이 뚫렸다.
+# finger_pose 가 이미 쓰는 FINGER_MATCH_FRAMES 와 같은 '지속' 개념을 제스처에도 적용한다.
+# 위젯이 제스처를 duration_sec(2초) 연속 hold 해야 완료 처리하므로(FaceMissionCaptcha.jsx)
+# 정직한 사용자는 실홀드 시 ~수십 프레임을 남겨 이 값을 항상 초과한다 → desync 없음.
+GESTURE_MATCH_FRAMES = 5
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +204,8 @@ def _in_window(t: int, window: Window) -> bool:
 
 
 def _verify_open(frames: list[HandEvidenceFrame], window: Window) -> bool:
-    """window 안에 (spread > OPEN_TH AND pinch_ratio >= PINCH_TH) 인 프레임이 존재하면 통과.
+    """window 안에 (spread > OPEN_TH AND pinch_ratio >= PINCH_TH) 인 프레임이
+    GESTURE_MATCH_FRAMES 개 이상이면 통과(지속 검증 — 1프레임 '스침' 통과 차단).
     pinch_ratio >= PINCH_TH 조건은 우선순위(pinch 가 아닐 것)를 반영한다 — 핀치는
     손가락을 벌린 채(spread 큼) 엄지-검지만 붙이므로 spread 만으론 open 으로 오통과한다.
     서버 독립 검증의 echo 방어 일관성을 위해 _verify_fist 와 동일하게 pinch 를 배제한다."""
@@ -203,33 +213,38 @@ def _verify_open(frames: list[HandEvidenceFrame], window: Window) -> bool:
     series = [(t, s, p) for (t, s, p) in series if s is not None and p is not None]
     if len(series) < MIN_VALID_FRAMES:
         return False
-    return any(
-        _in_window(t, window) and s > OPEN_TH and p >= PINCH_TH
-        for (t, s, p) in series
+    matches = sum(
+        1 for (t, s, p) in series
+        if _in_window(t, window) and s > OPEN_TH and p >= PINCH_TH
     )
+    return matches >= GESTURE_MATCH_FRAMES
 
 
 def _verify_fist(frames: list[HandEvidenceFrame], window: Window) -> bool:
-    """window 안에 (spread < FIST_TH AND pinch_ratio >= PINCH_TH) 인 프레임이 존재하면 통과.
+    """window 안에 (spread < FIST_TH AND pinch_ratio >= PINCH_TH) 인 프레임이
+    GESTURE_MATCH_FRAMES 개 이상이면 통과(지속 검증 — 1프레임 '스침' 통과 차단).
     pinch_ratio >= PINCH_TH 조건은 우선순위(pinch 가 아닐 것)를 반영한다 — 엄지-검지가
     붙은 프레임은 fist 가 아니라 pinch 로 본다(detectHandGesture 우선순위와 동일)."""
     series = [(f.t, _spread(f.landmarks), _pinch_ratio(f.landmarks)) for f in frames]
     series = [(t, s, p) for (t, s, p) in series if s is not None and p is not None]
     if len(series) < MIN_VALID_FRAMES:
         return False
-    return any(
-        _in_window(t, window) and s < FIST_TH and p >= PINCH_TH
-        for (t, s, p) in series
+    matches = sum(
+        1 for (t, s, p) in series
+        if _in_window(t, window) and s < FIST_TH and p >= PINCH_TH
     )
+    return matches >= GESTURE_MATCH_FRAMES
 
 
 def _verify_pinch(frames: list[HandEvidenceFrame], window: Window) -> bool:
-    """window 안에 pinch_ratio < PINCH_TH 인 프레임이 존재하면 통과."""
+    """window 안에 pinch_ratio < PINCH_TH 인 프레임이 GESTURE_MATCH_FRAMES 개 이상이면
+    통과(지속 검증 — 1프레임 '스침' 통과 차단)."""
     series = [(f.t, _pinch_ratio(f.landmarks)) for f in frames]
     series = [(t, r) for (t, r) in series if r is not None]
     if len(series) < MIN_VALID_FRAMES:
         return False
-    return any(_in_window(t, window) and r < PINCH_TH for (t, r) in series)
+    matches = sum(1 for (t, r) in series if _in_window(t, window) and r < PINCH_TH)
+    return matches >= GESTURE_MATCH_FRAMES
 
 
 # 손가락 지정 제스처 검증 파라미터.
