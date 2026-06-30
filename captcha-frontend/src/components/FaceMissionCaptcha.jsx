@@ -153,18 +153,21 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   const fpsWindowStartRef = useRef(0);
   const fpsSendMsRef = useRef(0);
   // A3[3]: hand 트랙 상태 (face refs 와 동형, 병렬). face refs 는 무수정.
-  const handIdxRef = useRef(0);
   const handProgressStartedAtRef = useRef(null);
   const handCompletedRef = useRef([]);
   const handEvidenceRef = useRef([]); // [{type, completed_at_t, frames:[{t, landmarks}]}]
   const lastHandEvidenceAtRef = useRef(0);
-  const faceAllDoneRef = useRef(false); // 마지막 face 지시 완료 여부
-  const handAllDoneRef = useRef(false); // 마지막 hand 지시 완료 여부 (hand 없으면 true)
+  const faceAllDoneRef = useRef(false); // 마지막 라운드까지 face 완료 여부
+  const handAllDoneRef = useRef(false); // 마지막 라운드까지 hand 완료 여부 (hand 없으면 true)
+  // Phase 3 라운드형: 얼굴 트랙·손 트랙을 라운드 단위로 묶는다. round i = 얼굴[i] + 손[i].
+  // 두 트랙이 공유하는 단일 라운드 인덱스 + per-라운드 트랙 완료 플래그(양쪽 AND 로만 advance).
+  const roundIdxRef = useRef(0);
+  const faceRoundDoneRef = useRef(false); // 현재 라운드의 얼굴 미션 완료
+  const handRoundDoneRef = useRef(false); // 현재 라운드의 손 미션 완료
 
   // 콜백/상태 미러 ref (onResults 안에서 stale closure 회피)
   const onSubmitRef = useRef(onSubmit);
   const specRef = useRef(spec);
-  const instructionIdxRef = useRef(0);
   const progressStartedAtRef = useRef(null);
   const noseHistoryRef = useRef([]); // NOD 검출용
   const completedRef = useRef([]);
@@ -181,6 +184,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   const [progressFraction, setProgressFraction] = useState(0);
   const [currentHandIndex, setCurrentHandIndex] = useState(0); // A3: hand 지시 인덱스
   const [handDetected, setHandDetected] = useState(false); // A3: 현재 hand 제스처 충족 표시
+  const [faceDetected, setFaceDetected] = useState(false); // Phase 3: 현재 face 동작 충족 표시(pill 초록)
+  const [roundPass, setRoundPass] = useState(false); // Phase 3: 라운드 통과 초록 오버레이
   const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
   const [hintVisible, setHintVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -208,8 +213,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   // ref 동기화
   useEffect(() => { onSubmitRef.current = onSubmit; }, [onSubmit]);
   useEffect(() => {
+    const hasHand = !!(spec?.hand_instructions && spec.hand_instructions.length > 0);
     specRef.current = spec;
-    instructionIdxRef.current = 0;
     progressStartedAtRef.current = null;
     noseHistoryRef.current = [];
     completedRef.current = [];
@@ -217,18 +222,23 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     lastEvidenceAtRef.current = 0;
     submittedRef.current = false;
     // A3: hand 트랙 리셋 (face 와 동형). hand 없는 spec 이면 handAllDone=true(하위호환).
-    handIdxRef.current = 0;
     handProgressStartedAtRef.current = null;
     handCompletedRef.current = [];
     handEvidenceRef.current = [];
     lastHandEvidenceAtRef.current = 0;
     faceAllDoneRef.current = false;
-    handAllDoneRef.current = !(spec?.hand_instructions && spec.hand_instructions.length > 0);
+    handAllDoneRef.current = !hasHand;
+    // Phase 3 라운드: 공유 인덱스 0, 양 트랙 라운드 플래그 리셋(hand 없는 spec 이면 hand 쪽 충족 처리).
+    roundIdxRef.current = 0;
+    faceRoundDoneRef.current = false;
+    handRoundDoneRef.current = !hasHand;
     startedAtRef.current = Date.now();
     setCurrentInstructionIndex(0);
     setProgressFraction(0);
     setCurrentHandIndex(0);
     setHandDetected(false);
+    setFaceDetected(false);
+    setRoundPass(false);
     setTimeLeft(spec?.time_limit_sec ?? 30);
     setHintVisible(false);
   }, [spec]);
@@ -387,6 +397,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           instructions: evidenceRef.current
             .filter(Boolean)
             .map((b) => ({
+              round_id: b.round_id ?? null,
               type: b.type,
               completed_at_t: b.completed_at_t ?? null,
               frames: b.frames,
@@ -396,6 +407,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           instructions: handEvidenceRef.current
             .filter(Boolean)
             .map((b) => ({
+              round_id: b.round_id ?? null,
               type: b.type,
               hand: b.hand ?? null,
               fingers_state: b.fingers_state ?? null,
@@ -408,9 +420,48 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   }
 
   // ---------------------------------------------------------------------------
+  // Phase 3 라운드 advance — 얼굴[round] AND 손[round] 둘 다 완료해야 다음 라운드로.
+  // 한쪽만 완료면 대기(차단). ⚠️ 비-마지막 라운드는 절대 maybeSubmit 호출 안 함(advance만).
+  // 마지막 라운드에서만 양 트랙 완료 플래그 세팅 + maybeSubmit(유일 제출) → 단일제출 불변.
+  // 두 콜백(face/hand)이 각각 자기 완료 시 호출하지만, 양쪽 플래그가 다 서야 1회만 진행한다.
+  // ---------------------------------------------------------------------------
+  function tryAdvanceRound() {
+    if (!faceRoundDoneRef.current || !handRoundDoneRef.current) return; // 한쪽만 → 차단(대기)
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
+    const totalRounds = currentSpec.instructions.length;
+    const hasHand = !!(currentSpec.hand_instructions && currentSpec.hand_instructions.length > 0);
+    const next = roundIdxRef.current + 1;
+    setRoundPass(true); // 카메라 영역 전체 초록 통과 오버레이(매 라운드)
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    if (next >= totalRounds) {
+      // 마지막 라운드 → 양 트랙 완료 + 단일 제출(유일 트리거). 3라운드 evidence 모아 1회 POST.
+      faceAllDoneRef.current = true;
+      handAllDoneRef.current = true;
+      maybeSubmit();
+    } else {
+      // 비-마지막: 0.7s 초록 표시 후 다음 라운드. maybeSubmit 호출 없음(advance만).
+      advanceTimerRef.current = setTimeout(() => {
+        roundIdxRef.current = next;
+        faceRoundDoneRef.current = false;
+        handRoundDoneRef.current = !hasHand;
+        progressStartedAtRef.current = null;
+        handProgressStartedAtRef.current = null;
+        setRoundPass(false);
+        setFaceDetected(false);
+        setHandDetected(false);
+        setProgressFraction(0);
+        setCurrentInstructionIndex(next);
+        setCurrentHandIndex(next);
+        setDetectionStatus('instruction_active');
+      }, 700);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // A3[3] hand 결과 콜백 (hands.onResults). face handleResults 와 동형이되 hand refs
   // 에만 쓴다 — face 검출/표시/evidence 로직과 완전 독립. 기대 hand 제스처를
-  // duration_sec 연속 유지하면 해당 hand 지시 완료 → completed_at_t 기록 → maybeSubmit.
+  // duration_sec 연속 유지하면 해당 hand 지시 완료 → completed_at_t 기록 → tryAdvanceRound.
   // ---------------------------------------------------------------------------
   function handleHandResults(results) {
     if (submittedRef.current) return;
@@ -424,11 +475,17 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       return;
     }
 
-    const idx = handIdxRef.current;
+    const idx = roundIdxRef.current;
     const inst = handInsts[idx];
     if (!inst) {
       handAllDoneRef.current = true;
       maybeSubmit();
+      return;
+    }
+
+    // Phase 3: 이 라운드 손 미션이 이미 완료됐으면 얼굴 완료를 대기(재완료/덮어쓰기 방지).
+    if (handRoundDoneRef.current) {
+      setHandDetected(true);
       return;
     }
 
@@ -465,7 +522,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       if (!buf || buf.type !== inst.type) {
         buf = {
           type: inst.type, hand: observedHand, fingers_state: observedFingers,
-          completed_at_t: null, frames: [],
+          round_id: idx, completed_at_t: null, frames: [],
         };
         handEvidenceRef.current[idx] = buf;
       } else {
@@ -493,18 +550,14 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       const elapsed = Date.now() - handProgressStartedAtRef.current;
       const target = inst.duration_sec * 1000;
       if (elapsed >= target) {
+        // 손[round] 완료 — 자기 인덱스 advance 없음. 라운드 advance는 tryAdvanceRound(얼굴 AND 손).
         handCompletedRef.current.push(inst.type);
         const evEntry = handEvidenceRef.current[idx];
         if (evEntry) evEntry.completed_at_t = nowMs;
         handProgressStartedAtRef.current = null;
-        const nextIdx = idx + 1;
-        if (nextIdx >= handInsts.length) {
-          handAllDoneRef.current = true;
-          maybeSubmit();
-        } else {
-          handIdxRef.current = nextIdx;
-          setCurrentHandIndex(nextIdx);
-        }
+        handRoundDoneRef.current = true;
+        setHandDetected(true);
+        tryAdvanceRound();
       }
     } else if (handProgressStartedAtRef.current != null) {
       handProgressStartedAtRef.current = null;
@@ -534,6 +587,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       // 얼굴 미검출
       ctx.restore();
       setDetectionStatus('no_face');
+      setFaceDetected(false);
       progressStartedAtRef.current = null;
       setProgressFraction(0);
       return;
@@ -543,8 +597,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     noseHistoryRef.current.push({ y: lm[1].y, t: Date.now() });
     if (noseHistoryRef.current.length > 60) noseHistoryRef.current.shift();
 
-    // 현재 지시
-    const idx = instructionIdxRef.current;
+    // 현재 지시 (Phase 3: 공유 라운드 인덱스)
+    const idx = roundIdxRef.current;
     const inst = currentSpec.instructions[idx];
 
     // 메쉬 오버레이
@@ -553,13 +607,20 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
     if (!inst) return;
 
+    // Phase 3: 이 라운드 얼굴 미션이 이미 완료됐으면 손 완료를 대기(재완료/덮어쓰기 방지).
+    if (faceRoundDoneRef.current) {
+      setFaceDetected(true);
+      setDetectionStatus('instruction_active');
+      return;
+    }
+
     // 원시 랜드마크 증거 기록 (A1). detected/게이지와 독립 — 얼굴이 검출되고 active
     // instruction 이 있는 프레임을 15fps 로 다운샘플해 누적한다(서버 기하검증의 입력).
     const nowMs = Date.now(); // noseHistory(아래 push)와 동일 시간원
     if (nowMs - lastEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
       let buf = evidenceRef.current[idx];
       if (!buf || buf.type !== inst.type) {
-        buf = { type: inst.type, completed_at_t: null, frames: [] };
+        buf = { type: inst.type, round_id: idx, completed_at_t: null, frames: [] };
         evidenceRef.current[idx] = buf;
       }
       if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
@@ -571,6 +632,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     // 동작 검출 + 진행도 누적
     const detected = detectInstruction(inst.type, lm, noseHistoryRef.current);
     setDetectionStatus(detected ? 'instruction_active' : 'no_face');
+    setFaceDetected(detected);
 
     if (detected) {
       if (progressStartedAtRef.current == null) {
@@ -581,32 +643,16 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
       setProgressFraction(Math.min(1, elapsed / target));
 
       if (elapsed >= target) {
-        // 단계 완료
+        // 얼굴[round] 완료 — 자기 인덱스 advance 없음. 라운드 advance는 tryAdvanceRound(얼굴 AND 손).
+        // completed_at_t 는 페이로드 조립(maybeSubmit) 전에 set 되어야 한다(동일 시간원 nowMs).
         completedRef.current.push(inst.type);
-        // 완료 시각 기록 (증거 프레임 t 와 동일 시간원 nowMs). 마지막 지시면 바로 아래
-        // onSubmit 이 호출되므로 페이로드 조립 전에 set 되어야 한다.
         const evEntry = evidenceRef.current[idx];
         if (evEntry) evEntry.completed_at_t = nowMs;
         progressStartedAtRef.current = null;
         setProgressFraction(0);
-        setDetectionStatus('instruction_complete');
-
-        const nextIdx = idx + 1;
-        if (nextIdx >= currentSpec.instructions.length) {
-          // A3: 마지막 face 지시 완료 → face 트랙 완료 표시. 실제 제출은 hand 까지
-          // 끝난 뒤 maybeSubmit 이 1회 수행한다(둘 다 만족해야 클리어 — 기획).
-          // 위 face 검출/게이지/evidence(completed_at_t 포함) 로직은 무수정.
-          faceAllDoneRef.current = true;
-          maybeSubmit();
-        } else {
-          // 0.6s 동안 체크마크 보여주고 다음 단계로
-          if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-          advanceTimerRef.current = setTimeout(() => {
-            instructionIdxRef.current = nextIdx;
-            setCurrentInstructionIndex(nextIdx);
-            setDetectionStatus('instruction_active');
-          }, 600);
-        }
+        faceRoundDoneRef.current = true;
+        setFaceDetected(true);
+        tryAdvanceRound();
       }
     } else {
       // 끊기면 진행 게이지 리셋
@@ -622,7 +668,6 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
   const totalSteps = spec.instructions.length;
   const currentInstruction = spec.instructions[currentInstructionIndex];
   const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; // A3
-  const isCompleteFlash = detectionStatus === 'instruction_complete';
 
   // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
   const cardEdge = embedded
@@ -659,7 +704,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             진행 상태
           </div>
           <div className="text-sm font-bold text-[#1d2a44] tabular-nums">
-            {Math.min(currentInstructionIndex + 1, totalSteps)}<span className="text-[#8a96ad]">/{totalSteps}</span> 단계
+            {Math.min(currentInstructionIndex + 1, totalSteps)}<span className="text-[#8a96ad]">/{totalSteps}</span> 문제
           </div>
         </div>
 
@@ -682,7 +727,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           {/* 큰 지시문 (상단 오버레이) */}
           {currentInstruction && (
             <div className="absolute top-3 left-3 right-3 flex justify-center pointer-events-none">
-              <div className="inline-flex items-center gap-2 bg-black/60 backdrop-blur px-4 py-2 rounded-full">
+              <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${faceDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
                 <span className="text-xl leading-none">
                   {ICON_FOR[currentInstruction.type] ?? '🎯'}
                 </span>
@@ -690,7 +735,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
                   {currentInstruction.label}
                 </span>
                 <span className="text-white/60 text-xs">
-                  ({currentInstruction.duration_sec}s)
+                  {faceDetected ? '감지됨 ✓' : `(${currentInstruction.duration_sec}s)`}
                 </span>
               </div>
             </div>
@@ -773,12 +818,13 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
             </div>
           )}
 
-          {/* 단계 완료 체크마크 */}
-          {isCompleteFlash && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="bg-emerald-500/85 text-white text-5xl w-24 h-24 rounded-full flex items-center justify-center shadow-2xl animate-pulse">
+          {/* 라운드 통과 — 카메라 영역 전체 반투명 초록 + V체크 + 통과! (피드백4) */}
+          {roundPass && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-emerald-500/40 backdrop-blur-[2px] pointer-events-none">
+              <div className="bg-emerald-500/90 text-white text-5xl w-24 h-24 rounded-full flex items-center justify-center shadow-2xl">
                 ✓
               </div>
+              <div className="text-white font-extrabold text-xl drop-shadow-lg">통과!</div>
             </div>
           )}
 
