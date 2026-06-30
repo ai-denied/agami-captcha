@@ -202,10 +202,15 @@ async def submit_answer(
         hit = check_face_evidence(answer, body.face_behavioral_data)
 
         # A3: 같은 face_mission 챌린지의 손동작 증거(hand_evidence)를 병렬 검증해 AND 결합.
-        # hand 미요구 챌린지(expected_hand_instruction_types 비어있음)는 check_hand_evidence
-        # 가 True 를 반환하므로 기존 face-only 동작은 불변.
-        hand_hit = check_hand_evidence(answer, body.face_behavioral_data)
-        hit = hit and hand_hit
+        # 현 정책상 모든 face_mission 은 hand 지시를 발급한다(issue 단계가 EASY 하드코드이고
+        # 세 난이도 프로필 모두 hand_instruction_count >= 2). 따라서 expected_hand 가 비어있는
+        # 답안은 구버전/비정상 토큰이므로 fail-closed 로 차단한다 — check_hand_evidence 의
+        # 하위호환(빈 expected -> True)이 face-only 자동통과로 새는 것을 호출부에서 막는다.
+        if not answer.expected_hand_instruction_types:
+            hit = False
+        else:
+            hand_hit = check_hand_evidence(answer, body.face_behavioral_data)
+            hit = hit and hand_hit
 
         # --- 관찰 단계: face-liveness /predict 호출 (verdict 미반영) ---------------
         # A2 hit 이 verdict 를 결정한다. 본 호출의 spoof_score 는 logger.info 에만
