@@ -120,7 +120,10 @@ def generate_face_challenge(
     duration: int = profile["duration_per_instruction_sec"]
 
     # 지시 종류는 중복 없이 sample.
-    instruction_pool = list(FaceInstructionType)
+    # nod(고개 끄덕이기)는 발급에서 제외한다: 사용자 체감 난이도가 높고
+    # NOD_RANGE_THRESHOLD=0.02 가 노이즈 수준이라 헐거움 원인이기도 하다. enum/라벨/
+    # _verify_nod/위젯 detectNod 는 남겨(in-flight nod 토큰의 graceful 검증) 발급 풀에서만 뺀다.
+    instruction_pool = [t for t in FaceInstructionType if t != FaceInstructionType.NOD]
     if count > len(instruction_pool):
         raise ValueError(
             f"지시 카탈로그({len(instruction_pool)}) 보다 많은 지시({count})를 요청함."
