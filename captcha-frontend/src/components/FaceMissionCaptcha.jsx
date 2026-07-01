@@ -280,6 +280,74 @@ const MAX_EVIDENCE_FRAMES = 150; // instruction당 상한 = 15fps × 10s
 
 
 
+// ==================== TTS(음성 안내) 헬퍼 ====================
+
+// 접근성 부가 기능 — 소리만 낸다. 캡챠 검출/제출/라운드 게이팅 로직과 완전 독립.
+
+// 미지원 브라우저·SSR 안전 가드. 실패해도 캡챠 동작 무영향(try 불필요).
+
+function speak(text) {
+
+  if (typeof window === 'undefined' || !window.speechSynthesis) return; // 미지원/SSR 방어
+
+  if (!text) return;
+
+  window.speechSynthesis.cancel();       // 이전 음성 중단(겹침 방지)
+
+  const u = new SpeechSynthesisUtterance(text);
+
+  u.lang = 'ko-KR';                       // OS 한국어 보이스 선택 위임(명시 voice 선택 안 함)
+
+  window.speechSynthesis.speak(u);
+
+}
+
+
+
+// 화면 텍스트 기반 음성 문장 조립(음성용 가공: 손가락 '+' → 쉼표, 콜론 제거).
+
+// 화면 표시 JSX는 무수정 — 음성 전용 별도 함수.
+
+function buildSpeechText(faceInst, handInst) {
+
+  const facePart = faceInst?.label ?? '';
+
+  let handPart = '';
+
+  if (handInst) {
+
+    const side = HAND_SIDE_LABELS[handInst.hand] ?? '손';
+
+    handPart = handInst.fingers?.length
+
+      ? `${side} ${handInst.fingers.map((f) => FINGER_KO[f] ?? f).join(', ')} 펴기`
+
+      : `${side} ${handInst.label}`;
+
+  }
+
+  return [facePart, handPart].filter(Boolean).join(', ');
+
+}
+
+
+
+// 라운드 지시 발화. 첫 라운드(roundIdx===0)만 "시작. " prepend(시작 신호+첫 지시 1회 발화).
+
+function speakInstruction(roundIdx, faceInst, handInst) {
+
+  const body = buildSpeechText(faceInst, handInst);
+
+  if (!body) return;
+
+  speak(roundIdx === 0 ? `시작. ${body}` : body);
+
+}
+
+// ============================================================
+
+
+
 export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded = false }) {
 
   // DOM
@@ -485,6 +553,37 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     setHintVisible(false);
 
   }, [spec]);
+
+
+
+  // 지시 음성 안내(부가 기능). currentInstructionIndex 변화마다 해당 라운드 지시 발화.
+
+  // 첫 라운드(0)는 "시작. " 포함. mpReady 전에는 발화 보류. cleanup 없음
+
+  // (최종 '통과'가 unmount로 잘리지 않도록 — 겹침은 speak() 내부 cancel로 처리).
+
+  // deps는 발급 고유 원시값(spec?.challenge_id) — 재발화 폭주 방어 + 새로고침 재발급 커버.
+
+  useEffect(() => {
+
+    if (!mpReady) return;
+
+    if (!spec?.instructions?.length) return;
+
+    const roundIdx = currentInstructionIndex;
+
+    speakInstruction(
+
+      roundIdx,
+
+      spec.instructions[roundIdx],
+
+      spec.hand_instructions?.[roundIdx] ?? null,
+
+    );
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentInstructionIndex, mpReady, spec?.challenge_id]);
 
 
 
@@ -867,6 +966,8 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     const next = roundIdxRef.current + 1;
 
     setRoundPass(true); // 카메라 영역 전체 초록 통과 오버레이(매 라운드)
+
+    speak('통과'); // 라운드 통과 음성(부가). 콜백 재진입 가드로 라운드당 1회 보장.
 
     if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
 
