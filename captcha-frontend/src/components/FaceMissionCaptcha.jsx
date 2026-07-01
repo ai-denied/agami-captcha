@@ -1344,7 +1344,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
   const cardEdge = embedded
 
-    ? 'border border-gray-200 shadow-sm'
+    ? ''
 
     : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
 
