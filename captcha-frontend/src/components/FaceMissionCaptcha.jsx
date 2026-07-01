@@ -1,4 +1,290 @@
 import { useEffect, useRef, useState } from 'react';
+import FishTimer from './FishTimer';
+import useMouseTracker from '../hooks/useMouseTracker';
+import { API_BASE_URL } from '../api/captchaApi';
+
+// =============================================================================
+// 손전등 캡챠 (1챌린지 = 3장 묶음, 실제 이미지 데이터셋 기반)
+// - 배경: <img> 로 spec.sub_challenges[i].image_url 표시 (800x600, 4:3)
+// - 손전등 효과: 이미지 위에 radial-gradient overlay div. rAF 로 DOM 직접 갱신
+//   하여 React 리렌더 우회 (기존 캔버스 패턴과 동일한 성능 특성).
+// - 클릭 시 정규화 좌표(0~1)로 onSubmit. 백엔드 verifier 가 bbox 매칭.
+// =============================================================================
+export default function FlashlightCaptcha({ spec, onSubmit, onRefresh, status, error, embedded = false }) {
+  const wrapRef = useRef(null);
+  const overlayRef = useRef(null);
+  const cursorRingRef = useRef(null);
+  const mouseRef = useRef({ x: 0.5, y: 0.5 });
+  const submissionsRef = useRef([]);
+  const startedAtRef = useRef(Date.now());
+
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 60);
+  const [hintVisible, setHintVisible] = useState(false);
+
+  const tracker = useMouseTracker();
+  const currentSub = spec?.sub_challenges?.[currentIndex];
+
+  // [spec] effect — 번들 라이프사이클 1회 초기화: 타이머 / 힌트 / submissions / index / tracker
+  useEffect(() => {
+    if (!spec) return;
+    setTimeLeft(spec.time_limit_sec);
+    setHintVisible(false);
+    setCurrentIndex(0);
+    submissionsRef.current = [];
+    tracker.reset();
+    startedAtRef.current = Date.now();
+
+    const tick = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) { clearInterval(tick); return 0; }
+        return t - 1;
+      });
+    }, 1000);
+
+    let hintTimer;
+    if (spec.hint_after_sec) {
+      hintTimer = setTimeout(() => setHintVisible(true), spec.hint_after_sec * 1000);
+    }
+    return () => { clearInterval(tick); if (hintTimer) clearTimeout(hintTimer); };
+  }, [spec]);
+
+  // [currentIndex] effect — sub 전환 시 trajectory 만 클리어. 타이머는 유지.
+  useEffect(() => {
+    tracker.reset();
+  }, [currentIndex]);
+
+  // [spec] effect — 손전등 overlay 의 radial-gradient 를 rAF 로 매 프레임 갱신.
+  // wrap 크기 측정 + ResizeObserver 로 반응형 대응.
+  useEffect(() => {
+    if (!spec) return;
+    const wrap = wrapRef.current;
+    const overlay = overlayRef.current;
+    const ring = cursorRingRef.current;
+    if (!wrap || !overlay) return;
+
+    let cssW = 0;
+    let cssH = 0;
+    const resize = () => {
+      const rect = wrap.getBoundingClientRect();
+      cssW = rect.width;
+      cssH = rect.height;
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
+
+    let raf = 0;
+    const draw = () => {
+      const { x, y } = mouseRef.current;
+      const mx = x * cssW;
+      const my = y * cssH;
+      const radius = spec.flashlight_radius * Math.min(cssW, cssH);
+
+      // radial-gradient 으로 마우스 위치에 손전등 구멍, 그 외엔 어두운 마스크.
+      overlay.style.background =
+        `radial-gradient(circle ${radius}px at ${mx}px ${my}px, ` +
+        `rgba(0,0,0,0) 0%, ` +
+        `rgba(0,0,0,0) 70%, ` +
+        `rgba(0,0,0,1) 100%)`;
+
+      if (ring) {
+        ring.style.transform = `translate(${mx}px, ${my}px) translate(-50%, -50%)`;
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [spec]);
+
+  const handleMouseMove = (e) => {
+    const rect = wrapRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    mouseRef.current = { x, y };
+    tracker.sample(e, rect);
+  };
+
+  const handleTouchMove = (e) => {
+  if (e.touches.length > 0) {
+    const touch = e.touches[0];
+    const rect = wrapRef.current.getBoundingClientRect();
+    const x = (touch.clientX - rect.left) / rect.width;
+    const y = (touch.clientY - rect.top) / rect.height;
+    
+    // 범위를 0~1로 제한 (손전등이 화면 밖으로 나가지 않게 함)
+    mouseRef.current = { 
+      x: Math.max(0, Math.min(1, x)), 
+      y: Math.max(0, Math.min(1, y)) 
+    };
+    
+    // 마우스 트래커에 좌표 전달
+    tracker.sample(touch, rect); 
+    
+    // 모바일에서 손전등 움직일 때 화면 스크롤 되는 것 방지
+    e.preventDefault();
+  }
+};
+
+  const handleClick = (e) => {
+    const rect = wrapRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    tracker.sample(e, rect);
+
+    // canvas_width/height: 클릭 시점 wrap div 의 표시 픽셀 크기. trajectory 좌표가
+    // 이 캔버스 기준이라 Phase 2 MLOps 로거가 학습 데이터(800x600) 좌표계로 환산할 때 사용.
+    submissionsRef.current = [
+      ...submissionsRef.current,
+      {
+        index: currentIndex,
+        click_x: x,
+        click_y: y,
+        canvas_width: Math.round(rect.width),
+        canvas_height: Math.round(rect.height),
+        trajectory: tracker.get(),
+      },
+    ];
+
+    if (currentIndex < 2) {
+      setCurrentIndex(currentIndex + 1);
+    } else {
+      onSubmit({ flashlight_submissions: submissionsRef.current });
+    }
+  };
+
+  if (!spec || !currentSub) return null;
+
+  return (
+    <div className={`w-full max-w-[900px] min-w-0 bg-white rounded-xl overflow-hidden mx-auto`}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-white/20 rounded-lg flex items-center justify-center text-lg">
+            🔦
+          </div>
+          <div>
+            <div className="font-bold text-[15px] leading-tight">손전등 탐색 캡챠</div>
+            <div className="text-xs opacity-85 mt-0.5">어둠 속에 숨겨진 물건을 3번 찾아주세요</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 bg-white/20 px-4 py-1.5 rounded-full">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span className="font-bold text-sm tabular-nums">{timeLeft}s</span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="px-6 pt-5">
+        {/* 진행도 바 */}
+        <div className="flex gap-2 mb-2">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className={`flex-1 h-1.5 rounded-full transition-colors ${
+                i < currentIndex
+                  ? 'bg-[#4a8bff]'
+                  : i === currentIndex
+                    ? 'bg-[#9ec3ff]'
+                    : 'bg-[#e0e7f3]'
+              }`}
+            />
+          ))}
+        </div>
+        <div className="text-xs text-[#8a96ad] mb-3">
+          진행 <span className="font-bold text-[#2563eb]">{currentIndex + 1}</span> / 3
+        </div>
+
+        <div className="flex items-center justify-between mb-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs text-[#8a96ad] font-semibold uppercase tracking-wide">찾을 물건</span>
+            <div className="inline-flex items-center gap-2 bg-[#eef4ff] border-[1.5px] border-[#c8dcff] px-3.5 py-1.5 rounded-full">
+              <span className="font-bold text-[#2563eb] text-sm">{currentSub.target_hint.label}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Image canvas — 모든 데이터셋 이미지가 800x600 (4:3) 로 통일됨.
+            동적 aspect 계산 없이 CSS 고정값으로 단순 처리.
+              - aspect-[4/3] : 컨테이너 자체가 4:3 비율
+              - max-w-[80vh] : 큰 viewport 에서 너비를 60vh×4/3=80vh 로 cap
+                               → height = 80vh × 0.75 = 60vh ≤ viewport 60%
+              - max-h-[60vh] : 안전망 — 비정상 케이스에도 viewport 넘침 방지
+              - mx-auto      : 너비 축소 시 가운데 정렬
+            ResizeObserver 가 wrap 크기 변화를 감지해 canvas backing store 도
+            DPR 배율로 재조정하고, mousemove/click 의 정규화 좌표는 rect 기준이라
+            사이즈 변경에도 정확도 영향 없음.
+            이미지는 비율이 컨테이너와 같으므로 object-cover/contain 차이 없으나,
+            방어 차원에서 contain 사용 (혹시 데이터셋에 다른 비율 추가될 경우 안전). */}
+        <div
+          ref={wrapRef}
+          onMouseMove={handleMouseMove}
+          onTouchMove={handleTouchMove}     // 추가
+          onTouchStart={handleTouchMove}    // 추가 (터치 시작 시 즉시 위치 반영)
+          onClick={handleClick}
+          className="relative w-full max-w-[80vh] aspect-[4/3] max-h-[60vh] mx-auto bg-[#0a0a14] rounded-lg overflow-hidden border-2 border-[#1a1a28]"
+          style={{ cursor: 'none', touchAction: 'none' }} // touchAction: 'none' 중요!
+        >
+          <img
+            key={currentSub.image_url}
+            src={`${API_BASE_URL}${currentSub.image_url}`}
+            alt=""
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+            draggable={false}
+          />
+          <div
+            ref={overlayRef}
+            className="absolute inset-0 pointer-events-none"
+          />
+
+          <div
+            ref={cursorRingRef}
+            className="absolute top-0 left-0 w-5 h-5 border-2 border-[rgba(255,235,180,0.85)] rounded-full pointer-events-none will-change-transform"
+            style={{
+              mixBlendMode: 'screen',
+              transform: 'translate(0px, 0px) translate(-50%, -50%)',
+            }}
+          />
+        </div>
+
+        <FishTimer
+          remainingMs={timeLeft * 1000}
+          totalMs={spec.time_limit_sec * 1000}
+          className="mt-3.5"
+        />
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-center gap-2 text-[#8a96ad] text-xs">
+          <span>🛡️</span>
+          <span>agami로 보호되는 페이지</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onRefresh}
+            className="bg-transparent border-[1.5px] border-[#e0e7f3] text-[#6b7891] px-4 py-2 rounded-xl text-sm font-semibold hover:border-[#c8dcff] hover:text-[#4a8bff] transition-colors"
+          >
+            🔄 새로고침
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+다른건 아무것도 건드리지 말고 위 코드 디자인 똑같이 아래코드에도 적용해줘
+
+import { useEffect, useRef, useState } from 'react';
 import { detectInstruction, extractEvidence } from '../lib/faceDetection';
 import { detectHandGesture, extractHandEvidence, toUserHand, isFingerExtended, fingersMatch } from '../lib/handDetection';
 import FishTimer from './FishTimer';
@@ -16,99 +302,99 @@ import FishTimer from './FishTimer';
 const g = /** @type {any} */ (globalThis);
 
 const MP_CDN_SCRIPTS = [
-  'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js',
-  'https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js',
-  'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js',
-  'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
+  'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js',
+  'https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js',
+  'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js',
+  'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
 ];
 const MP_LOAD_TIMEOUT_MS = 10000;
 
 let _mpPromise = null;
 
 function loadMediaPipe() {
-  if (_mpPromise) return _mpPromise;
-  if (typeof document === 'undefined') {
-    return Promise.reject(new Error('document not available (SSR?)'));
-  }
+  if (_mpPromise) return _mpPromise;
+  if (typeof document === 'undefined') {
+    return Promise.reject(new Error('document not available (SSR?)'));
+  }
 
-  const loadScript = (src) => new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-mp-src="${src}"]`);
-    if (existing) {
-      if (existing.dataset.loaded === '1') return resolve();
-      existing.addEventListener('load', () => resolve());
-      existing.addEventListener('error', () => reject(new Error('script error: ' + src)));
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.crossOrigin = 'anonymous';
-    s.dataset.mpSrc = src;
-    s.addEventListener('load', () => { s.dataset.loaded = '1'; resolve(); });
-    s.addEventListener('error', () => reject(new Error('script error: ' + src)));
-    document.head.appendChild(s);
-  });
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[data-mp-src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === '1') return resolve();
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('script error: ' + src)));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.crossOrigin = 'anonymous';
+    s.dataset.mpSrc = src;
+    s.addEventListener('load', () => { s.dataset.loaded = '1'; resolve(); });
+    s.addEventListener('error', () => reject(new Error('script error: ' + src)));
+    document.head.appendChild(s);
+  });
 
-  const built = new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`MediaPipe CDN 로드 ${MP_LOAD_TIMEOUT_MS}ms 초과`)),
-      MP_LOAD_TIMEOUT_MS,
-    );
-    Promise.all(MP_CDN_SCRIPTS.map(loadScript))
-      .then(() => {
-        clearTimeout(timer);
-        if (
-          typeof g.FaceMesh !== 'function'
-          || typeof g.Camera !== 'function'
-          || typeof g.Hands !== 'function'
-        ) {
-          return reject(new Error('FaceMesh/Hands/Camera not registered after CDN load'));
-        }
-        resolve();
-      })
-      .catch((err) => { clearTimeout(timer); reject(err); });
-  });
+  const built = new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`MediaPipe CDN 로드 ${MP_LOAD_TIMEOUT_MS}ms 초과`)),
+      MP_LOAD_TIMEOUT_MS,
+    );
+    Promise.all(MP_CDN_SCRIPTS.map(loadScript))
+      .then(() => {
+        clearTimeout(timer);
+        if (
+          typeof g.FaceMesh !== 'function'
+          || typeof g.Camera !== 'function'
+          || typeof g.Hands !== 'function'
+        ) {
+          return reject(new Error('FaceMesh/Hands/Camera not registered after CDN load'));
+        }
+        resolve();
+      })
+      .catch((err) => { clearTimeout(timer); reject(err); });
+  });
 
-  // 실패 시 다음 호출에서 재시도 가능하도록 cache 비움
-  built.catch(() => { _mpPromise = null; });
-  _mpPromise = built;
-  return built;
+  // 실패 시 다음 호출에서 재시도 가능하도록 cache 비움
+  built.catch(() => { _mpPromise = null; });
+  _mpPromise = built;
+  return built;
 }
 
 // =============================================================================
 // 안면 미션 캡챠 (MediaPipe Face Mesh 기반 실시간 자동 감지)
 // -----------------------------------------------------------------------------
 // 동작 흐름
-//   1) 마운트 시 FaceMesh 초기화 + Camera 시작
-//   2) 매 프레임 onResults → 랜드마크 추출 → 캔버스에 메쉬 오버레이
-//   3) 현재 지시 타입을 detectInstruction 으로 판정. true 가
-//      duration_sec 만큼 연속 유지되면 해당 단계 완료, 다음 단계로 자동 진행.
-//   4) 모든 단계 완료 시 onSubmit(payload) 1회 호출.
+//   1) 마운트 시 FaceMesh 초기화 + Camera 시작
+//   2) 매 프레임 onResults → 랜드마크 추출 → 캔버스에 메쉬 오버레이
+//   3) 현재 지시 타입을 detectInstruction 으로 판정. true 가
+//      duration_sec 만큼 연속 유지되면 해당 단계 완료, 다음 단계로 자동 진행.
+//   4) 모든 단계 완료 시 onSubmit(payload) 1회 호출.
 //
 // 정리
-//   - useEffect cleanup 에서 camera.stop / faceMesh.close / track.stop 모두 수행.
+//   - useEffect cleanup 에서 camera.stop / faceMesh.close / track.stop 모두 수행.
 //
 // 알려진 한계 (MVP)
-//   - 클라이언트 사이드 검출이라 사용자가 마음먹고 우회 가능 (사진/녹화 영상 등).
-//   - 진짜 검증은 서버에서 행동 시퀀스 + 시간 + 행동 패턴 종합 분석 필요.
-//   - 팀원 AI 모델 합류 시 백엔드로 영상/랜드마크 시퀀스 전송 후 검증으로 교체 예정.
-//   - 현재 모델은 클라이언트가 completed_instructions 만 신뢰 보고하는 구조.
+//   - 클라이언트 사이드 검출이라 사용자가 마음먹고 우회 가능 (사진/녹화 영상 등).
+//   - 진짜 검증은 서버에서 행동 시퀀스 + 시간 + 행동 패턴 종합 분석 필요.
+//   - 팀원 AI 모델 합류 시 백엔드로 영상/랜드마크 시퀀스 전송 후 검증으로 교체 예정.
+//   - 현재 모델은 클라이언트가 completed_instructions 만 신뢰 보고하는 구조.
 // =============================================================================
 
 const ICON_FOR = {
-  blink_left: '👁️',
-  blink_right: '👁️',
-  turn_left: '⬅️',
-  turn_right: '➡️',
-  smile: '😊',
-  nod: '🙇',
+  blink_left: '👁️',
+  blink_right: '👁️',
+  turn_left: '⬅️',
+  turn_right: '➡️',
+  smile: '😊',
+  nod: '🙇',
 };
 
 // A3: 손동작 지시 아이콘 (ICON_FOR 와 동형, 추가).
 const HAND_ICON_FOR = {
-  open_hand: '🖐️',
-  fist: '✊',
-  pinch: '🤏',
+  open_hand: '🖐️',
+  fist: '✊',
+  pinch: '🤏',
 };
 
 // A3 좌우: 사용자 손 라벨. hand 미지정(None)이면 "손"(좌우 무관, backcompat).
@@ -123,10 +409,10 @@ const COLOR_WHITE = 'rgba(255, 255, 255, 0.95)';
 
 // MediaPipe WASM/asset CDN. 패키지 버전과 일치하는 디렉터리를 가리킴.
 const MP_FACE_MESH_CDN = (file) =>
-  `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+  `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
 // A3: Hands WASM/asset CDN (face 와 동형).
 const MP_HANDS_CDN = (file) =>
-  `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+  `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
 
 // 카메라 캡처 해상도. Camera 설정과 단일 출처로 공유하고, 증거 페이로드의
 // frame_w/frame_h 메타로도 실어 보낸다. (landmark 는 정규화 좌표라 기하 계산엔 무관)
@@ -140,762 +426,742 @@ const MAX_EVIDENCE_FRAMES = 150; // instruction당 상한 = 15fps × 10s
 
 
 export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded = false }) {
-  // DOM
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
+  // DOM
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
 
-  // MediaPipe 인스턴스
-  const faceMeshRef = useRef(null);
-  const cameraRef = useRef(null);
-  const handsRef = useRef(null); // A3: MediaPipe Hands (face 와 병렬)
-  // A3[2] FPS 계측 — face+hand 동시 송신의 실효 처리율 측정용.
-  const fpsCountRef = useRef(0);
-  const fpsWindowStartRef = useRef(0);
-  const fpsSendMsRef = useRef(0);
-  // A3[3]: hand 트랙 상태 (face refs 와 동형, 병렬). face refs 는 무수정.
-  const handProgressStartedAtRef = useRef(null);
-  const handCompletedRef = useRef([]);
-  const handEvidenceRef = useRef([]); // [{type, completed_at_t, frames:[{t, landmarks}]}]
-  const lastHandEvidenceAtRef = useRef(0);
-  const faceAllDoneRef = useRef(false); // 마지막 라운드까지 face 완료 여부
-  const handAllDoneRef = useRef(false); // 마지막 라운드까지 hand 완료 여부 (hand 없으면 true)
-  // Phase 3 라운드형: 얼굴 트랙·손 트랙을 라운드 단위로 묶는다. round i = 얼굴[i] + 손[i].
-  // 두 트랙이 공유하는 단일 라운드 인덱스 + per-라운드 트랙 완료 플래그(양쪽 AND 로만 advance).
-  const roundIdxRef = useRef(0);
-  const faceRoundDoneRef = useRef(false); // 현재 라운드의 얼굴 미션 완료
-  const handRoundDoneRef = useRef(false); // 현재 라운드의 손 미션 완료
+  // MediaPipe 인스턴스
+  const faceMeshRef = useRef(null);
+  const cameraRef = useRef(null);
+  const handsRef = useRef(null); // A3: MediaPipe Hands (face 와 병렬)
+  // A3[2] FPS 계측 — face+hand 동시 송신의 실효 처리율 측정용.
+  const fpsCountRef = useRef(0);
+  const fpsWindowStartRef = useRef(0);
+  const fpsSendMsRef = useRef(0);
+  // A3[3]: hand 트랙 상태 (face refs 와 동형, 병렬). face refs 는 무수정.
+  const handProgressStartedAtRef = useRef(null);
+  const handCompletedRef = useRef([]);
+  const handEvidenceRef = useRef([]); // [{type, completed_at_t, frames:[{t, landmarks}]}]
+  const lastHandEvidenceAtRef = useRef(0);
+  const faceAllDoneRef = useRef(false); // 마지막 라운드까지 face 완료 여부
+  const handAllDoneRef = useRef(false); // 마지막 라운드까지 hand 완료 여부 (hand 없으면 true)
+  // Phase 3 라운드형: 얼굴 트랙·손 트랙을 라운드 단위로 묶는다. round i = 얼굴[i] + 손[i].
+  // 두 트랙이 공유하는 단일 라운드 인덱스 + per-라운드 트랙 완료 플래그(양쪽 AND 로만 advance).
+  const roundIdxRef = useRef(0);
+  const faceRoundDoneRef = useRef(false); // 현재 라운드의 얼굴 미션 완료
+  const handRoundDoneRef = useRef(false); // 현재 라운드의 손 미션 완료
 
-  // 콜백/상태 미러 ref (onResults 안에서 stale closure 회피)
-  const onSubmitRef = useRef(onSubmit);
-  const specRef = useRef(spec);
-  const progressStartedAtRef = useRef(null);
-  const noseHistoryRef = useRef([]); // NOD 검출용
-  const completedRef = useRef([]);
-  const startedAtRef = useRef(Date.now());
-  const submittedRef = useRef(false);
-  const advanceTimerRef = useRef(null);
-  const evidenceRef = useRef([]); // instruction별 증거 버퍼 [{type, frames:[{t, landmarks}]}]
-  const lastEvidenceAtRef = useRef(0); // 마지막 증거 기록 시각 (다운샘플 throttle)
+  // 콜백/상태 미러 ref (onResults 안에서 stale closure 회피)
+  const onSubmitRef = useRef(onSubmit);
+  const specRef = useRef(spec);
+  const progressStartedAtRef = useRef(null);
+  const noseHistoryRef = useRef([]); // NOD 검출용
+  const completedRef = useRef([]);
+  const startedAtRef = useRef(Date.now());
+  const submittedRef = useRef(false);
+  const advanceTimerRef = useRef(null);
+  const evidenceRef = useRef([]); // instruction별 증거 버퍼 [{type, frames:[{t, landmarks}]}]
+  const lastEvidenceAtRef = useRef(0); // 마지막 증거 기록 시각 (다운샘플 throttle)
 
-  // 렌더 트리거용 상태
-  const [detectionStatus, setDetectionStatus] = useState('initializing');
-  // initializing | no_face | instruction_active | instruction_complete | denied | error
-  const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
-  const [progressFraction, setProgressFraction] = useState(0);
-  const [currentHandIndex, setCurrentHandIndex] = useState(0); // A3: hand 지시 인덱스
-  const [handDetected, setHandDetected] = useState(false); // A3: 현재 hand 제스처 충족 표시
-  const [faceDetected, setFaceDetected] = useState(false); // Phase 3: 현재 face 동작 충족 표시(pill 초록)
-  const [roundPass, setRoundPass] = useState(false); // Phase 3: 라운드 통과 초록 오버레이
-  const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
-  const [hintVisible, setHintVisible] = useState(false);
-  const [errorMessage, setErrorMessage] = useState(null);
-  const [mpReady, setMpReady] = useState(
-    typeof g.FaceMesh === 'function'
-    && typeof g.Camera === 'function'
-    && typeof g.Hands === 'function',
-  );
+  // 렌더 트리거용 상태
+  const [detectionStatus, setDetectionStatus] = useState('initializing');
+  // initializing | no_face | instruction_active | instruction_complete | denied | error
+  const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
+  const [progressFraction, setProgressFraction] = useState(0);
+  const [currentHandIndex, setCurrentHandIndex] = useState(0); // A3: hand 지시 인덱스
+  const [handDetected, setHandDetected] = useState(false); // A3: 현재 hand 제스처 충족 표시
+  const [faceDetected, setFaceDetected] = useState(false); // Phase 3: 현재 face 동작 충족 표시(pill 초록)
+  const [roundPass, setRoundPass] = useState(false); // Phase 3: 라운드 통과 초록 오버레이
+  const [timeLeft, setTimeLeft] = useState(spec?.time_limit_sec ?? 30);
+  const [hintVisible, setHintVisible] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [mpReady, setMpReady] = useState(
+    typeof g.FaceMesh === 'function'
+    && typeof g.Camera === 'function'
+    && typeof g.Hands === 'function',
+  );
 
-  // MediaPipe CDN 사전 로딩 (마운트 1회). 이미 로드돼있으면 즉시 ready.
-  useEffect(() => {
-    if (mpReady) return;
-    let cancelled = false;
-    loadMediaPipe()
-      .then(() => { if (!cancelled) setMpReady(true); })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error('MediaPipe CDN load failed:', err);
-        setDetectionStatus('error');
-        setErrorMessage('MediaPipe 라이브러리 로드 실패 — 네트워크 또는 CDN 차단을 확인하세요.');
-      });
-    return () => { cancelled = true; };
-  }, [mpReady]);
+  // MediaPipe CDN 사전 로딩 (마운트 1회). 이미 로드돼있으면 즉시 ready.
+  useEffect(() => {
+    if (mpReady) return;
+    let cancelled = false;
+    loadMediaPipe()
+      .then(() => { if (!cancelled) setMpReady(true); })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('MediaPipe CDN load failed:', err);
+        setDetectionStatus('error');
+        setErrorMessage('MediaPipe 라이브러리 로드 실패 — 네트워크 또는 CDN 차단을 확인하세요.');
+      });
+    return () => { cancelled = true; };
+  }, [mpReady]);
 
-  // ref 동기화
-  useEffect(() => { onSubmitRef.current = onSubmit; }, [onSubmit]);
-  useEffect(() => {
-    const hasHand = !!(spec?.hand_instructions && spec.hand_instructions.length > 0);
-    specRef.current = spec;
-    progressStartedAtRef.current = null;
-    noseHistoryRef.current = [];
-    completedRef.current = [];
-    evidenceRef.current = [];
-    lastEvidenceAtRef.current = 0;
-    submittedRef.current = false;
-    // A3: hand 트랙 리셋 (face 와 동형). hand 없는 spec 이면 handAllDone=true(하위호환).
-    handProgressStartedAtRef.current = null;
-    handCompletedRef.current = [];
-    handEvidenceRef.current = [];
-    lastHandEvidenceAtRef.current = 0;
-    faceAllDoneRef.current = false;
-    handAllDoneRef.current = !hasHand;
-    // Phase 3 라운드: 공유 인덱스 0, 양 트랙 라운드 플래그 리셋(hand 없는 spec 이면 hand 쪽 충족 처리).
-    roundIdxRef.current = 0;
-    faceRoundDoneRef.current = false;
-    handRoundDoneRef.current = !hasHand;
-    startedAtRef.current = Date.now();
-    setCurrentInstructionIndex(0);
-    setProgressFraction(0);
-    setCurrentHandIndex(0);
-    setHandDetected(false);
-    setFaceDetected(false);
-    setRoundPass(false);
-    setTimeLeft(spec?.time_limit_sec ?? 30);
-    setHintVisible(false);
-  }, [spec]);
+  // ref 동기화
+  useEffect(() => { onSubmitRef.current = onSubmit; }, [onSubmit]);
+  useEffect(() => {
+    const hasHand = !!(spec?.hand_instructions && spec.hand_instructions.length > 0);
+    specRef.current = spec;
+    progressStartedAtRef.current = null;
+    noseHistoryRef.current = [];
+    completedRef.current = [];
+    evidenceRef.current = [];
+    lastEvidenceAtRef.current = 0;
+    submittedRef.current = false;
+    // A3: hand 트랙 리셋 (face 와 동형). hand 없는 spec 이면 handAllDone=true(하위호환).
+    handProgressStartedAtRef.current = null;
+    handCompletedRef.current = [];
+    handEvidenceRef.current = [];
+    lastHandEvidenceAtRef.current = 0;
+    faceAllDoneRef.current = false;
+    handAllDoneRef.current = !hasHand;
+    // Phase 3 라운드: 공유 인덱스 0, 양 트랙 라운드 플래그 리셋(hand 없는 spec 이면 hand 쪽 충족 처리).
+    roundIdxRef.current = 0;
+    faceRoundDoneRef.current = false;
+    handRoundDoneRef.current = !hasHand;
+    startedAtRef.current = Date.now();
+    setCurrentInstructionIndex(0);
+    setProgressFraction(0);
+    setCurrentHandIndex(0);
+    setHandDetected(false);
+    setFaceDetected(false);
+    setRoundPass(false);
+    setTimeLeft(spec?.time_limit_sec ?? 30);
+    setHintVisible(false);
+  }, [spec]);
 
-  // 디스플레이용 카운트다운 + 힌트 (자동 fail 은 useCaptcha 훅이 처리)
-  useEffect(() => {
-    if (!spec) return;
-    const tick = setInterval(() => {
-      setTimeLeft((t) => {
-        if (t <= 1) { clearInterval(tick); return 0; }
-        return t - 1;
-      });
-    }, 1000);
-    let hintTimer;
-    if (spec.hint_after_sec) {
-      hintTimer = setTimeout(() => setHintVisible(true), spec.hint_after_sec * 1000);
-    }
-    return () => { clearInterval(tick); if (hintTimer) clearTimeout(hintTimer); };
-  }, [spec]);
+  // 디스플레이용 카운트다운 + 힌트 (자동 fail 은 useCaptcha 훅이 처리)
+  useEffect(() => {
+    if (!spec) return;
+    const tick = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) { clearInterval(tick); return 0; }
+        return t - 1;
+      });
+    }, 1000);
+    let hintTimer;
+    if (spec.hint_after_sec) {
+      hintTimer = setTimeout(() => setHintVisible(true), spec.hint_after_sec * 1000);
+    }
+    return () => { clearInterval(tick); if (hintTimer) clearTimeout(hintTimer); };
+  }, [spec]);
 
-  // ---------------------------------------------------------------------------
-  // MediaPipe + Camera 초기화 (mpReady=true 이후 1회)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (!mpReady) return;  // CDN 로딩 대기
-    if (!videoRef.current || !canvasRef.current) return;
+  // ---------------------------------------------------------------------------
+  // MediaPipe + Camera 초기화 (mpReady=true 이후 1회)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!mpReady) return;  // CDN 로딩 대기
+    if (!videoRef.current || !canvasRef.current) return;
 
-    // 방어용 가드 — CDN 로드 성공 후에도 만약 등록 안 됐다면 명확히 에러로 떨어뜨림.
-    if (typeof g.FaceMesh !== 'function' || typeof g.Camera !== 'function') {
-      setDetectionStatus('error');
-      setErrorMessage('MediaPipe 심볼 등록 실패 — 페이지 새로고침 후 재시도하세요.');
-      return;
-    }
+    // 방어용 가드 — CDN 로드 성공 후에도 만약 등록 안 됐다면 명확히 에러로 떨어뜨림.
+    if (typeof g.FaceMesh !== 'function' || typeof g.Camera !== 'function') {
+      setDetectionStatus('error');
+      setErrorMessage('MediaPipe 심볼 등록 실패 — 페이지 새로고침 후 재시도하세요.');
+      return;
+    }
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
 
-    let cancelled = false;
+    let cancelled = false;
 
-    const faceMesh = new g.FaceMesh({ locateFile: MP_FACE_MESH_CDN });
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
+    const faceMesh = new g.FaceMesh({ locateFile: MP_FACE_MESH_CDN });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
 
-    faceMesh.onResults((results) => handleResults(results, canvas, ctx));
-    faceMeshRef.current = faceMesh;
+    faceMesh.onResults((results) => handleResults(results, canvas, ctx));
+    faceMeshRef.current = faceMesh;
 
-    // A3[2]: Hands 를 face 와 병렬로 생성. face 검출 로직(handleResults/faceDetection)
-    // 은 무수정 — hands 는 추가만. 이 단계는 토대 확인용으로 제스처/FPS 를 콘솔에 로그.
-    const hands = new g.Hands({ locateFile: MP_HANDS_CDN });
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
-    });
-    hands.onResults(handleHandResults);
-    handsRef.current = hands;
+    // A3[2]: Hands 를 face 와 병렬로 생성. face 검출 로직(handleResults/faceDetection)
+    // 은 무수정 — hands 는 추가만. 이 단계는 토대 확인용으로 제스처/FPS 를 콘솔에 로그.
+    const hands = new g.Hands({ locateFile: MP_HANDS_CDN });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
+    });
+    hands.onResults(handleHandResults);
+    handsRef.current = hands;
 
-    const camera = new g.Camera(video, {
-      onFrame: async () => {
-        if (cancelled || !faceMeshRef.current) return;
-        const t0 = performance.now();
-        try {
-          await faceMeshRef.current.send({ image: video });
-          // A3[2]: face + hand 동시 송신. 둘 다 await. hands 는 추가만.
-          if (handsRef.current) {
-            await handsRef.current.send({ image: video });
-          }
-        } catch (err) {
-          // 모델이 닫힌 후 들어오는 마지막 frame 등은 무시
-          if (!cancelled) console.warn('mp send failed:', err);
-        }
-        // A3[2] FPS 계측: face+hand 동시 처리의 실효 fps 를 1초 창마다 콘솔 출력.
-        // 15fps(EVIDENCE_FPS) 미만이면 증거 다운샘플 목표 미달 → modelComplexity:0
-        // 또는 프레임 교대 대안 검토 필요(보고 참조).
-        const t1 = performance.now();
-        fpsSendMsRef.current += t1 - t0;
-        fpsCountRef.current += 1;
-        if (fpsWindowStartRef.current === 0) fpsWindowStartRef.current = t1;
-        const elapsed = t1 - fpsWindowStartRef.current;
-        if (elapsed >= 1000) {
-          fpsCountRef.current = 0;
-          fpsSendMsRef.current = 0;
-          fpsWindowStartRef.current = t1;
-        }
-      },
-      width: CAMERA_WIDTH,
-      height: CAMERA_HEIGHT,
-    });
-    cameraRef.current = camera;
+    const camera = new g.Camera(video, {
+      onFrame: async () => {
+        if (cancelled || !faceMeshRef.current) return;
+        const t0 = performance.now();
+        try {
+          await faceMeshRef.current.send({ image: video });
+          // A3[2]: face + hand 동시 송신. 둘 다 await. hands 는 추가만.
+          if (handsRef.current) {
+            await handsRef.current.send({ image: video });
+          }
+        } catch (err) {
+          // 모델이 닫힌 후 들어오는 마지막 frame 등은 무시
+          if (!cancelled) console.warn('mp send failed:', err);
+        }
+        // A3[2] FPS 계측: face+hand 동시 처리의 실효 fps 를 1초 창마다 콘솔 출력.
+        // 15fps(EVIDENCE_FPS) 미만이면 증거 다운샘플 목표 미달 → modelComplexity:0
+        // 또는 프레임 교대 대안 검토 필요(보고 참조).
+        const t1 = performance.now();
+        fpsSendMsRef.current += t1 - t0;
+        fpsCountRef.current += 1;
+        if (fpsWindowStartRef.current === 0) fpsWindowStartRef.current = t1;
+        const elapsed = t1 - fpsWindowStartRef.current;
+        if (elapsed >= 1000) {
+          fpsCountRef.current = 0;
+          fpsSendMsRef.current = 0;
+          fpsWindowStartRef.current = t1;
+        }
+      },
+      width: CAMERA_WIDTH,
+      height: CAMERA_HEIGHT,
+    });
+    cameraRef.current = camera;
 
-    camera
-      .start()
-      .then(() => {
-        if (!cancelled) setDetectionStatus('no_face');
-      })
-      .catch((err) => {
-        console.error('camera start failed:', err);
-        if (cancelled) return;
-        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-          setDetectionStatus('denied');
-        } else {
-          setDetectionStatus('error');
-          setErrorMessage(err?.message || String(err));
-        }
-      });
+    camera
+      .start()
+      .then(() => {
+        if (!cancelled) setDetectionStatus('no_face');
+      })
+      .catch((err) => {
+        console.error('camera start failed:', err);
+        if (cancelled) return;
+        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+          setDetectionStatus('denied');
+        } else {
+          setDetectionStatus('error');
+          setErrorMessage(err?.message || String(err));
+        }
+      });
 
-    return () => {
-      cancelled = true;
-      if (advanceTimerRef.current) {
-        clearTimeout(advanceTimerRef.current);
-        advanceTimerRef.current = null;
-      }
-      try { camera.stop(); } catch (_) {}
-      try { faceMesh.close(); } catch (_) {}
-      try { hands.close(); } catch (_) {}
-      faceMeshRef.current = null;
-      cameraRef.current = null;
-      handsRef.current = null;
-      // Camera 클래스가 만든 stream 도 명시적으로 해제 (LED off 보장)
-      const stream = video.srcObject;
-      if (stream && typeof stream.getTracks === 'function') {
-        stream.getTracks().forEach((t) => {
-          try { t.stop(); } catch (_) {}
-        });
-      }
-      video.srcObject = null;
-    };
-  }, [mpReady]);
+    return () => {
+      cancelled = true;
+      if (advanceTimerRef.current) {
+        clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = null;
+      }
+      try { camera.stop(); } catch (_) {}
+      try { faceMesh.close(); } catch (_) {}
+      try { hands.close(); } catch (_) {}
+      faceMeshRef.current = null;
+      cameraRef.current = null;
+      handsRef.current = null;
+      // Camera 클래스가 만든 stream 도 명시적으로 해제 (LED off 보장)
+      const stream = video.srcObject;
+      if (stream && typeof stream.getTracks === 'function') {
+        stream.getTracks().forEach((t) => {
+          try { t.stop(); } catch (_) {}
+        });
+      }
+      video.srcObject = null;
+    };
+  }, [mpReady]);
 
-  // ---------------------------------------------------------------------------
-  // A3[3]: face·hand 둘 다 완료됐을 때만 1회 제출. face 완료(handleResults)와
-  // hand 완료(handleHandResults)가 각각 호출하고, 두 트랙 모두 끝났을 때 제출한다
-  // (기획: 둘 다 만족해야 클리어). 서버는 face_hit AND hand_hit 로 각각 검증.
-  // ---------------------------------------------------------------------------
-  function maybeSubmit() {
-    if (submittedRef.current) return;
-    if (!faceAllDoneRef.current || !handAllDoneRef.current) return;
-    const currentSpec = specRef.current;
-    if (!currentSpec) return;
-    submittedRef.current = true;
-    onSubmitRef.current({
-      completed_instructions: [...completedRef.current],
-      face_behavioral_data: {
-        time_taken_ms: Date.now() - startedAtRef.current,
-        steps_count: currentSpec.instructions.length,
-        evidence_version: 1,
-        frame_w: CAMERA_WIDTH,
-        frame_h: CAMERA_HEIGHT,
-        face_evidence: {
-          instructions: evidenceRef.current
-            .filter(Boolean)
-            .map((b) => ({
-              round_id: b.round_id ?? null,
-              type: b.type,
-              completed_at_t: b.completed_at_t ?? null,
-              frames: b.frames,
-            })),
-        },
-        hand_evidence: {
-          instructions: handEvidenceRef.current
-            .filter(Boolean)
-            .map((b) => ({
-              round_id: b.round_id ?? null,
-              type: b.type,
-              hand: b.hand ?? null,
-              fingers_state: b.fingers_state ?? null,
-              completed_at_t: b.completed_at_t ?? null,
-              frames: b.frames,
-            })),
-        },
-      },
-    });
-  }
+  // ---------------------------------------------------------------------------
+  // A3[3]: face·hand 둘 다 완료됐을 때만 1회 제출. face 완료(handleResults)와
+  // hand 완료(handleHandResults)가 각각 호출하고, 두 트랙 모두 끝났을 때 제출한다
+  // (기획: 둘 다 만족해야 클리어). 서버는 face_hit AND hand_hit 로 각각 검증.
+  // ---------------------------------------------------------------------------
+  function maybeSubmit() {
+    if (submittedRef.current) return;
+    if (!faceAllDoneRef.current || !handAllDoneRef.current) return;
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
+    submittedRef.current = true;
+    onSubmitRef.current({
+      completed_instructions: [...completedRef.current],
+      face_behavioral_data: {
+        time_taken_ms: Date.now() - startedAtRef.current,
+        steps_count: currentSpec.instructions.length,
+        evidence_version: 1,
+        frame_w: CAMERA_WIDTH,
+        frame_h: CAMERA_HEIGHT,
+        face_evidence: {
+          instructions: evidenceRef.current
+            .filter(Boolean)
+            .map((b) => ({
+              round_id: b.round_id ?? null,
+              type: b.type,
+              completed_at_t: b.completed_at_t ?? null,
+              frames: b.frames,
+            })),
+        },
+        hand_evidence: {
+          instructions: handEvidenceRef.current
+            .filter(Boolean)
+            .map((b) => ({
+              round_id: b.round_id ?? null,
+              type: b.type,
+              hand: b.hand ?? null,
+              fingers_state: b.fingers_state ?? null,
+              completed_at_t: b.completed_at_t ?? null,
+              frames: b.frames,
+            })),
+        },
+      },
+    });
+  }
 
-  // ---------------------------------------------------------------------------
-  // Phase 3 라운드 advance — 얼굴[round] AND 손[round] 둘 다 완료해야 다음 라운드로.
-  // 한쪽만 완료면 대기(차단). ⚠️ 비-마지막 라운드는 절대 maybeSubmit 호출 안 함(advance만).
-  // 마지막 라운드에서만 양 트랙 완료 플래그 세팅 + maybeSubmit(유일 제출) → 단일제출 불변.
-  // 두 콜백(face/hand)이 각각 자기 완료 시 호출하지만, 양쪽 플래그가 다 서야 1회만 진행한다.
-  // ---------------------------------------------------------------------------
-  function tryAdvanceRound() {
-    if (!faceRoundDoneRef.current || !handRoundDoneRef.current) return; // 한쪽만 → 차단(대기)
-    const currentSpec = specRef.current;
-    if (!currentSpec) return;
-    const totalRounds = currentSpec.instructions.length;
-    const hasHand = !!(currentSpec.hand_instructions && currentSpec.hand_instructions.length > 0);
-    const next = roundIdxRef.current + 1;
-    setRoundPass(true); // 카메라 영역 전체 초록 통과 오버레이(매 라운드)
-    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-    if (next >= totalRounds) {
-      // 마지막 라운드 → 양 트랙 완료 + 단일 제출(유일 트리거). 3라운드 evidence 모아 1회 POST.
-      faceAllDoneRef.current = true;
-      handAllDoneRef.current = true;
-      maybeSubmit();
-    } else {
-      // 비-마지막: 0.7s 초록 표시 후 다음 라운드. maybeSubmit 호출 없음(advance만).
-      advanceTimerRef.current = setTimeout(() => {
-        roundIdxRef.current = next;
-        faceRoundDoneRef.current = false;
-        handRoundDoneRef.current = !hasHand;
-        progressStartedAtRef.current = null;
-        handProgressStartedAtRef.current = null;
-        setRoundPass(false);
-        setFaceDetected(false);
-        setHandDetected(false);
-        setProgressFraction(0);
-        setCurrentInstructionIndex(next);
-        setCurrentHandIndex(next);
-        setDetectionStatus('instruction_active');
-      }, 700);
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // Phase 3 라운드 advance — 얼굴[round] AND 손[round] 둘 다 완료해야 다음 라운드로.
+  // 한쪽만 완료면 대기(차단). ⚠️ 비-마지막 라운드는 절대 maybeSubmit 호출 안 함(advance만).
+  // 마지막 라운드에서만 양 트랙 완료 플래그 세팅 + maybeSubmit(유일 제출) → 단일제출 불변.
+  // 두 콜백(face/hand)이 각각 자기 완료 시 호출하지만, 양쪽 플래그가 다 서야 1회만 진행한다.
+  // ---------------------------------------------------------------------------
+  function tryAdvanceRound() {
+    if (!faceRoundDoneRef.current || !handRoundDoneRef.current) return; // 한쪽만 → 차단(대기)
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
+    const totalRounds = currentSpec.instructions.length;
+    const hasHand = !!(currentSpec.hand_instructions && currentSpec.hand_instructions.length > 0);
+    const next = roundIdxRef.current + 1;
+    setRoundPass(true); // 카메라 영역 전체 초록 통과 오버레이(매 라운드)
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    if (next >= totalRounds) {
+      // 마지막 라운드 → 양 트랙 완료 + 단일 제출(유일 트리거). 3라운드 evidence 모아 1회 POST.
+      faceAllDoneRef.current = true;
+      handAllDoneRef.current = true;
+      maybeSubmit();
+    } else {
+      // 비-마지막: 0.7s 초록 표시 후 다음 라운드. maybeSubmit 호출 없음(advance만).
+      advanceTimerRef.current = setTimeout(() => {
+        roundIdxRef.current = next;
+        faceRoundDoneRef.current = false;
+        handRoundDoneRef.current = !hasHand;
+        progressStartedAtRef.current = null;
+        handProgressStartedAtRef.current = null;
+        setRoundPass(false);
+        setFaceDetected(false);
+        setHandDetected(false);
+        setProgressFraction(0);
+        setCurrentInstructionIndex(next);
+        setCurrentHandIndex(next);
+        setDetectionStatus('instruction_active');
+      }, 700);
+    }
+  }
 
-  // ---------------------------------------------------------------------------
-  // A3[3] hand 결과 콜백 (hands.onResults). face handleResults 와 동형이되 hand refs
-  // 에만 쓴다 — face 검출/표시/evidence 로직과 완전 독립. 기대 hand 제스처를
-  // duration_sec 연속 유지하면 해당 hand 지시 완료 → completed_at_t 기록 → tryAdvanceRound.
-  // ---------------------------------------------------------------------------
-  function handleHandResults(results) {
-    if (submittedRef.current) return;
-    const currentSpec = specRef.current;
-    if (!currentSpec) return;
+  // ---------------------------------------------------------------------------
+  // A3[3] hand 결과 콜백 (hands.onResults). face handleResults 와 동형이되 hand refs
+  // 에만 쓴다 — face 검출/표시/evidence 로직과 완전 독립. 기대 hand 제스처를
+  // duration_sec 연속 유지하면 해당 hand 지시 완료 → completed_at_t 기록 → tryAdvanceRound.
+  // ---------------------------------------------------------------------------
+  function handleHandResults(results) {
+    if (submittedRef.current) return;
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
 
-    const handInsts = currentSpec.hand_instructions || [];
-    if (handInsts.length === 0) {
-      handAllDoneRef.current = true; // hand 미요구 spec → 즉시 완료(하위호환)
-      maybeSubmit();
-      return;
-    }
+    const handInsts = currentSpec.hand_instructions || [];
+    if (handInsts.length === 0) {
+      handAllDoneRef.current = true; // hand 미요구 spec → 즉시 완료(하위호환)
+      maybeSubmit();
+      return;
+    }
 
-    const idx = roundIdxRef.current;
-    const inst = handInsts[idx];
-    if (!inst) {
-      handAllDoneRef.current = true;
-      maybeSubmit();
-      return;
-    }
+    const idx = roundIdxRef.current;
+    const inst = handInsts[idx];
+    if (!inst) {
+      handAllDoneRef.current = true;
+      maybeSubmit();
+      return;
+    }
 
-    // Phase 3: 이 라운드 손 미션이 이미 완료됐으면 얼굴 완료를 대기(재완료/덮어쓰기 방지).
-    if (handRoundDoneRef.current) {
-      setHandDetected(true);
-      return;
-    }
+    // Phase 3: 이 라운드 손 미션이 이미 완료됐으면 얼굴 완료를 대기(재완료/덮어쓰기 방지).
+    if (handRoundDoneRef.current) {
+      setHandDetected(true);
+      return;
+    }
 
-    // A3 좌우: 기대 손(inst.hand)이 지정되면 그 손을 고르고, 없으면 첫 손([0], 기존 동작).
-    const handLms = results.multiHandLandmarks || [];
-    const handedness = results.multiHandedness || [];
-    const expectedSide = inst.hand ?? null; // "left"|"right"|null(좌우 무관)
-    let pickIdx = 0;
-    if (expectedSide) {
-      pickIdx = handLms.findIndex((_, i) => toUserHand(handedness[i]?.label) === expectedSide);
-    }
-    const lm = pickIdx >= 0 ? handLms[pickIdx] : undefined;
-    if (!lm) {
-      // 손 미검출(또는 기대 side 손 없음) → 진행 리셋 (face no_face 와 동형)
-      handProgressStartedAtRef.current = null;
-      setHandDetected(false);
-      return;
-    }
-    const observedHand = toUserHand(handedness[pickIdx]?.label); // 관측된 사용자 손
+    // A3 좌우: 기대 손(inst.hand)이 지정되면 그 손을 고르고, 없으면 첫 손([0], 기존 동작).
+    const handLms = results.multiHandLandmarks || [];
+    const handedness = results.multiHandedness || [];
+    const expectedSide = inst.hand ?? null; // "left"|"right"|null(좌우 무관)
+    let pickIdx = 0;
+    if (expectedSide) {
+      pickIdx = handLms.findIndex((_, i) => toUserHand(handedness[i]?.label) === expectedSide);
+    }
+    const lm = pickIdx >= 0 ? handLms[pickIdx] : undefined;
+    if (!lm) {
+      // 손 미검출(또는 기대 side 손 없음) → 진행 리셋 (face no_face 와 동형)
+      handProgressStartedAtRef.current = null;
+      setHandDetected(false);
+      return;
+    }
+    const observedHand = toUserHand(handedness[pickIdx]?.label); // 관측된 사용자 손
 
-    // 원시 hand 랜드마크 증거 기록 (face evidence 와 동형, 15fps 다운샘플).
-    const nowMs = Date.now();
-    const gesture = detectHandGesture(lm);
-    if (nowMs - lastHandEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
-      // A3 손가락: 관측 폄 상태(서버는 frames 로 재계산하지만 위젯 관측치도 실어둠).
-      const observedFingers = {
-        thumb: isFingerExtended(lm, 'thumb'),
-        index: isFingerExtended(lm, 'index'),
-        middle: isFingerExtended(lm, 'middle'),
-        ring: isFingerExtended(lm, 'ring'),
-        pinky: isFingerExtended(lm, 'pinky'),
-      };
-      let buf = handEvidenceRef.current[idx];
-      if (!buf || buf.type !== inst.type) {
-        buf = {
-          type: inst.type, hand: observedHand, fingers_state: observedFingers,
-          round_id: idx, completed_at_t: null, frames: [],
-        };
-        handEvidenceRef.current[idx] = buf;
-      } else {
-        if (buf.hand == null && observedHand != null) buf.hand = observedHand;
-        buf.fingers_state = observedFingers; // 최신 관측 손가락 상태
-      }
-      if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
-        buf.frames.push({ t: nowMs, landmarks: extractHandEvidence(lm) });
-      }
-      lastHandEvidenceAtRef.current = nowMs;
-    }
+    // 원시 hand 랜드마크 증거 기록 (face evidence 와 동형, 15fps 다운샘플).
+    const nowMs = Date.now();
+    const gesture = detectHandGesture(lm);
+    if (nowMs - lastHandEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
+      // A3 손가락: 관측 폄 상태(서버는 frames 로 재계산하지만 위젯 관측치도 실어둠).
+      const observedFingers = {
+        thumb: isFingerExtended(lm, 'thumb'),
+        index: isFingerExtended(lm, 'index'),
+        middle: isFingerExtended(lm, 'middle'),
+        ring: isFingerExtended(lm, 'ring'),
+        pinky: isFingerExtended(lm, 'pinky'),
+      };
+      let buf = handEvidenceRef.current[idx];
+      if (!buf || buf.type !== inst.type) {
+        buf = {
+          type: inst.type, hand: observedHand, fingers_state: observedFingers,
+          round_id: idx, completed_at_t: null, frames: [],
+        };
+        handEvidenceRef.current[idx] = buf;
+      } else {
+        if (buf.hand == null && observedHand != null) buf.hand = observedHand;
+        buf.fingers_state = observedFingers; // 최신 관측 손가락 상태
+      }
+      if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
+        buf.frames.push({ t: nowMs, landmarks: extractHandEvidence(lm) });
+      }
+      lastHandEvidenceAtRef.current = nowMs;
+    }
 
-    // 제스처 검출 + 연속 유지 (face 게이지와 동형).
-    // finger_pose 는 단일 제스처(open/fist/pinch)가 아니라 손가락 집합 일치로 판정한다
-    // (detectHandGesture 는 'finger_pose' 를 반환하지 않으므로 fingersMatch 사용).
-    // 서버 _verify_fingers/_fingers_match 와 동일 기준 → 위젯·서버 완료 판정 일치.
-    const detected = inst.type === 'finger_pose'
-      ? fingersMatch(lm, inst.fingers || [])
-      : gesture === inst.type;
-    setHandDetected(detected);
-    if (detected) {
-      if (handProgressStartedAtRef.current == null) {
-        handProgressStartedAtRef.current = Date.now();
-      }
-      const elapsed = Date.now() - handProgressStartedAtRef.current;
-      const target = inst.duration_sec * 1000;
-      if (elapsed >= target) {
-        // 손[round] 완료 — 자기 인덱스 advance 없음. 라운드 advance는 tryAdvanceRound(얼굴 AND 손).
-        handCompletedRef.current.push(inst.type);
-        const evEntry = handEvidenceRef.current[idx];
-        if (evEntry) evEntry.completed_at_t = nowMs;
-        handProgressStartedAtRef.current = null;
-        handRoundDoneRef.current = true;
-        setHandDetected(true);
-        tryAdvanceRound();
-      }
-    } else if (handProgressStartedAtRef.current != null) {
-      handProgressStartedAtRef.current = null;
-    }
-  }
+    // 제스처 검출 + 연속 유지 (face 게이지와 동형).
+    // finger_pose 는 단일 제스처(open/fist/pinch)가 아니라 손가락 집합 일치로 판정한다
+    // (detectHandGesture 는 'finger_pose' 를 반환하지 않으므로 fingersMatch 사용).
+    // 서버 _verify_fingers/_fingers_match 와 동일 기준 → 위젯·서버 완료 판정 일치.
+    const detected = inst.type === 'finger_pose'
+      ? fingersMatch(lm, inst.fingers || [])
+      : gesture === inst.type;
+    setHandDetected(detected);
+    if (detected) {
+      if (handProgressStartedAtRef.current == null) {
+        handProgressStartedAtRef.current = Date.now();
+      }
+      const elapsed = Date.now() - handProgressStartedAtRef.current;
+      const target = inst.duration_sec * 1000;
+      if (elapsed >= target) {
+        // 손[round] 완료 — 자기 인덱스 advance 없음. 라운드 advance는 tryAdvanceRound(얼굴 AND 손).
+        handCompletedRef.current.push(inst.type);
+        const evEntry = handEvidenceRef.current[idx];
+        if (evEntry) evEntry.completed_at_t = nowMs;
+        handProgressStartedAtRef.current = null;
+        handRoundDoneRef.current = true;
+        setHandDetected(true);
+        tryAdvanceRound();
+      }
+    } else if (handProgressStartedAtRef.current != null) {
+      handProgressStartedAtRef.current = null;
+    }
+  }
 
-  // ---------------------------------------------------------------------------
-  // onResults : 매 프레임 호출 (faceMesh.onResults 콜백)
-  // ---------------------------------------------------------------------------
-  function handleResults(results, canvas, ctx) {
-    if (submittedRef.current) return;
+  // ---------------------------------------------------------------------------
+  // onResults : 매 프레임 호출 (faceMesh.onResults 콜백)
+  // ---------------------------------------------------------------------------
+  function handleResults(results, canvas, ctx) {
+    if (submittedRef.current) return;
 
-    const currentSpec = specRef.current;
-    if (!currentSpec) return;
+    const currentSpec = specRef.current;
+    if (!currentSpec) return;
 
-    // 캔버스 크기 동기화 (video 의 실제 해상도에 맞춤)
-    const vw = results.image?.width || 480;
-    const vh = results.image?.height || 480;
-    if (canvas.width !== vw) canvas.width = vw;
-    if (canvas.height !== vh) canvas.height = vh;
+    // 캔버스 크기 동기화 (video 의 실제 해상도에 맞춤)
+    const vw = results.image?.width || 480;
+    const vh = results.image?.height || 480;
+    if (canvas.width !== vw) canvas.width = vw;
+    if (canvas.height !== vh) canvas.height = vh;
 
-    ctx.save();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const lm = results.multiFaceLandmarks?.[0];
-    if (!lm) {
-      // 얼굴 미검출
-      ctx.restore();
-      setDetectionStatus('no_face');
-      setFaceDetected(false);
-      progressStartedAtRef.current = null;
-      setProgressFraction(0);
-      return;
-    }
+    const lm = results.multiFaceLandmarks?.[0];
+    if (!lm) {
+      // 얼굴 미검출
+      ctx.restore();
+      setDetectionStatus('no_face');
+      setFaceDetected(false);
+      progressStartedAtRef.current = null;
+      setProgressFraction(0);
+      return;
+    }
 
-    // 코 Y 누적 (NOD 검출용)
-    noseHistoryRef.current.push({ y: lm[1].y, t: Date.now() });
-    if (noseHistoryRef.current.length > 60) noseHistoryRef.current.shift();
+    // 코 Y 누적 (NOD 검출용)
+    noseHistoryRef.current.push({ y: lm[1].y, t: Date.now() });
+    if (noseHistoryRef.current.length > 60) noseHistoryRef.current.shift();
 
-    // 현재 지시 (Phase 3: 공유 라운드 인덱스)
-    const idx = roundIdxRef.current;
-    const inst = currentSpec.instructions[idx];
+    // 현재 지시 (Phase 3: 공유 라운드 인덱스)
+    const idx = roundIdxRef.current;
+    const inst = currentSpec.instructions[idx];
 
-    // 메쉬 오버레이
-    drawMesh(ctx, lm, inst?.type);
-    ctx.restore();
+    // 메쉬 오버레이
+    drawMesh(ctx, lm, inst?.type);
+    ctx.restore();
 
-    if (!inst) return;
+    if (!inst) return;
 
-    // Phase 3: 이 라운드 얼굴 미션이 이미 완료됐으면 손 완료를 대기(재완료/덮어쓰기 방지).
-    if (faceRoundDoneRef.current) {
-      setFaceDetected(true);
-      setDetectionStatus('instruction_active');
-      return;
-    }
+    // Phase 3: 이 라운드 얼굴 미션이 이미 완료됐으면 손 완료를 대기(재완료/덮어쓰기 방지).
+    if (faceRoundDoneRef.current) {
+      setFaceDetected(true);
+      setDetectionStatus('instruction_active');
+      return;
+    }
 
-    // 원시 랜드마크 증거 기록 (A1). detected/게이지와 독립 — 얼굴이 검출되고 active
-    // instruction 이 있는 프레임을 15fps 로 다운샘플해 누적한다(서버 기하검증의 입력).
-    const nowMs = Date.now(); // noseHistory(아래 push)와 동일 시간원
-    if (nowMs - lastEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
-      let buf = evidenceRef.current[idx];
-      if (!buf || buf.type !== inst.type) {
-        buf = { type: inst.type, round_id: idx, completed_at_t: null, frames: [] };
-        evidenceRef.current[idx] = buf;
-      }
-      if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
-        buf.frames.push({ t: nowMs, landmarks: extractEvidence(lm) });
-      }
-      lastEvidenceAtRef.current = nowMs;
-    }
+    // 원시 랜드마크 증거 기록 (A1). detected/게이지와 독립 — 얼굴이 검출되고 active
+    // instruction 이 있는 프레임을 15fps 로 다운샘플해 누적한다(서버 기하검증의 입력).
+    const nowMs = Date.now(); // noseHistory(아래 push)와 동일 시간원
+    if (nowMs - lastEvidenceAtRef.current >= EVIDENCE_MIN_INTERVAL_MS) {
+      let buf = evidenceRef.current[idx];
+      if (!buf || buf.type !== inst.type) {
+        buf = { type: inst.type, round_id: idx, completed_at_t: null, frames: [] };
+        evidenceRef.current[idx] = buf;
+      }
+      if (buf.frames.length < MAX_EVIDENCE_FRAMES) {
+        buf.frames.push({ t: nowMs, landmarks: extractEvidence(lm) });
+      }
+      lastEvidenceAtRef.current = nowMs;
+    }
 
-    // 동작 검출 + 진행도 누적
-    const detected = detectInstruction(inst.type, lm, noseHistoryRef.current);
-    setDetectionStatus(detected ? 'instruction_active' : 'no_face');
-    setFaceDetected(detected);
+    // 동작 검출 + 진행도 누적
+    const detected = detectInstruction(inst.type, lm, noseHistoryRef.current);
+    setDetectionStatus(detected ? 'instruction_active' : 'no_face');
+    setFaceDetected(detected);
 
-    if (detected) {
-      if (progressStartedAtRef.current == null) {
-        progressStartedAtRef.current = Date.now();
-      }
-      const elapsed = Date.now() - progressStartedAtRef.current;
-      const target = inst.duration_sec * 1000;
-      setProgressFraction(Math.min(1, elapsed / target));
+    if (detected) {
+      if (progressStartedAtRef.current == null) {
+        progressStartedAtRef.current = Date.now();
+      }
+      const elapsed = Date.now() - progressStartedAtRef.current;
+      const target = inst.duration_sec * 1000;
+      setProgressFraction(Math.min(1, elapsed / target));
 
-      if (elapsed >= target) {
-        // 얼굴[round] 완료 — 자기 인덱스 advance 없음. 라운드 advance는 tryAdvanceRound(얼굴 AND 손).
-        // completed_at_t 는 페이로드 조립(maybeSubmit) 전에 set 되어야 한다(동일 시간원 nowMs).
-        completedRef.current.push(inst.type);
-        const evEntry = evidenceRef.current[idx];
-        if (evEntry) evEntry.completed_at_t = nowMs;
-        progressStartedAtRef.current = null;
-        setProgressFraction(0);
-        faceRoundDoneRef.current = true;
-        setFaceDetected(true);
-        tryAdvanceRound();
-      }
-    } else {
-      // 끊기면 진행 게이지 리셋
-      if (progressStartedAtRef.current != null) {
-        progressStartedAtRef.current = null;
-        setProgressFraction(0);
-      }
-    }
-  }
+      if (elapsed >= target) {
+        // 얼굴[round] 완료 — 자기 인덱스 advance 없음. 라운드 advance는 tryAdvanceRound(얼굴 AND 손).
+        // completed_at_t 는 페이로드 조립(maybeSubmit) 전에 set 되어야 한다(동일 시간원 nowMs).
+        completedRef.current.push(inst.type);
+        const evEntry = evidenceRef.current[idx];
+        if (evEntry) evEntry.completed_at_t = nowMs;
+        progressStartedAtRef.current = null;
+        setProgressFraction(0);
+        faceRoundDoneRef.current = true;
+        setFaceDetected(true);
+        tryAdvanceRound();
+      }
+    } else {
+      // 끊기면 진행 게이지 리셋
+      if (progressStartedAtRef.current != null) {
+        progressStartedAtRef.current = null;
+        setProgressFraction(0);
+      }
+    }
+  }
 
-  if (!spec) return null;
+  if (!spec) return null;
 
-  const totalSteps = spec.instructions.length;
-  const currentInstruction = spec.instructions[currentInstructionIndex];
-  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; // A3
+  const totalSteps = spec.instructions.length;
+  const currentInstruction = spec.instructions[currentInstructionIndex];
+  const currentHandInstruction = spec.hand_instructions?.[currentHandIndex] ?? null; // A3
 
-  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
-  const cardEdge = embedded
-    ? 'border border-gray-200 shadow-sm'
-    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
+  // 임베드(embedded) 시에만: 큰 그림자 대신 옅은 회색 테두리 + shadow-sm(평면형). 직접/단독은 기존 그림자 유지.
+  const cardEdge = embedded
+    ? 'border border-gray-200 shadow-sm'
+    : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
 
-  return (
-    <div className={`w-full max-w-[900px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-white/20 rounded-lg flex items-center justify-center text-lg">
-            😶
-          </div>
-          <div>
-            <div className="font-bold text-[15px] leading-tight">안면 미션 캡챠</div>
-            <div className="text-xs opacity-85 mt-0.5">카메라가 동작을 자동 감지합니다</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 bg-white/20 px-4 py-1.5 rounded-full">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          <span className="font-bold text-sm tabular-nums">{timeLeft}s</span>
-        </div>
-      </div>
+  return (
+    <div className={`w-full max-w-[520px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-white/20 rounded-lg flex items-center justify-center text-lg">
+            😶
+          </div>
+          <div>
+            <div className="font-bold text-[15px] leading-tight">안면 미션 캡챠</div>
+            <div className="text-xs opacity-85 mt-0.5">카메라가 동작을 자동 감지합니다</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 bg-white/20 px-4 py-1.5 rounded-full">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span className="font-bold text-sm tabular-nums">{timeLeft}s</span>
+        </div>
+      </div>
 
-      {/* Body */}
-      <div className="px-6 pt-5">
-        {/* 진행도 바 */}
-        <div className="flex gap-2 mb-2">
-          {Array.from({ length: totalSteps }).map((_, i) => (
-            <div
-              key={i}
-              className={`flex-1 h-1.5 rounded-full transition-colors ${
-                i < currentInstructionIndex
-                  ? 'bg-[#4a8bff]'
-                  : i === currentInstructionIndex
-                    ? 'bg-[#9ec3ff]'
-                    : 'bg-[#e0e7f3]'
-              }`}
-            />
-          ))}
-        </div>
-        <div className="text-xs text-[#8a96ad] mb-3">
-          진행 <span className="font-bold text-[#2563eb]">{Math.min(currentInstructionIndex + 1, totalSteps)}</span> / {totalSteps}
-        </div>
+      {/* Body */}
+      <div className="px-6 pt-5">
+        {/* 단계 카운터 */}
+        <div className="flex items-center justify-between mb-3.5">
+          <div className="text-xs text-[#8a96ad] font-semibold uppercase tracking-wide">
+            진행 상태
+          </div>
+          <div className="text-sm font-bold text-[#1d2a44] tabular-nums">
+            {Math.min(currentInstructionIndex + 1, totalSteps)}<span className="text-[#8a96ad]">/{totalSteps}</span> 문제
+          </div>
+        </div>
 
-        <div className="flex items-center justify-between mb-3.5">
-          <div className="flex items-center gap-2.5">
-            <span className="text-xs text-[#8a96ad] font-semibold uppercase tracking-wide">수행할 동작</span>
-            <div className="inline-flex items-center gap-2 bg-[#eef4ff] border-[1.5px] border-[#c8dcff] px-3.5 py-1.5 rounded-full">
-              <span className="font-bold text-[#2563eb] text-sm">{currentInstruction?.label || '완료'}</span>
-            </div>
-          </div>
-        </div>
+        {/* 카메라 영역 */}
+        <div className="relative w-full aspect-square bg-[#0a0a14] rounded-lg overflow-hidden border-2 border-[#1a1a28]">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ transform: 'scaleX(-1)' }}
+          />
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ transform: 'scaleX(-1)', mixBlendMode: 'screen' }}
+          />
 
-        {/* 카메라 영역 */}
-        <div className="relative w-full max-w-[520px] aspect-square mx-auto bg-[#0a0a14] rounded-lg overflow-hidden border-2 border-[#1a1a28]">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{ transform: 'scaleX(-1)' }}
-          />
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 w-full h-full pointer-events-none"
-            style={{ transform: 'scaleX(-1)', mixBlendMode: 'screen' }}
-          />
+          {/* 큰 지시문 (상단 오버레이) */}
+          {currentInstruction && (
+            <div className="absolute top-3 left-3 right-3 flex justify-center pointer-events-none">
+              <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${faceDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
+                <span className="text-xl leading-none">
+                  {ICON_FOR[currentInstruction.type] ?? '🎯'}
+                </span>
+                <span className="text-white font-bold text-sm">
+                  {currentInstruction.label}
+                </span>
+                <span className="text-white/60 text-xs">
+                  {faceDetected ? '감지됨 ✓' : `(${currentInstruction.duration_sec}s)`}
+                </span>
+              </div>
+            </div>
+          )}
 
-          {/* 큰 지시문 (상단 오버레이) */}
-          {currentInstruction && (
-            <div className="absolute top-3 left-3 right-3 flex justify-center pointer-events-none">
-              <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${faceDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
-                <span className="text-xl leading-none">
-                  {ICON_FOR[currentInstruction.type] ?? '🎯'}
-                </span>
-                <span className="text-white font-bold text-sm">
-                  {currentInstruction.label}
-                </span>
-                <span className="text-white/60 text-xs">
-                  {faceDetected ? '감지됨 ✓' : `(${currentInstruction.duration_sec}s)`}
-                </span>
-              </div>
-            </div>
-          )}
+          {/* A3: 손동작 지시 (얼굴 줄 아래에 동시 표시 — face pill 무수정, 추가). */}
+          {currentHandInstruction && (
+            <div className="absolute top-[3.75rem] left-3 right-3 flex justify-center pointer-events-none">
+              <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${handDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
+                <span className="text-xl leading-none">
+                  {HAND_ICON_FOR[currentHandInstruction.type] ?? '✋'}
+                </span>
+                <span className="text-white font-bold text-sm">
+                  {HAND_SIDE_LABELS[currentHandInstruction.hand] ?? '손'}: {
+                    currentHandInstruction.fingers?.length
+                      ? `${currentHandInstruction.fingers.map((f) => FINGER_KO[f] ?? f).join('+')} 펴기`
+                      : currentHandInstruction.label
+                  }
+                </span>
+                <span className="text-white/60 text-xs">
+                  {handDetected ? '감지됨 ✓' : `(${currentHandInstruction.duration_sec}s)`}
+                </span>
+              </div>
+            </div>
+          )}
 
-          {/* A3: 손동작 지시 (얼굴 줄 아래에 동시 표시 — face pill 무수정, 추가). */}
-          {currentHandInstruction && (
-            <div className="absolute top-[3.75rem] left-3 right-3 flex justify-center pointer-events-none">
-              <div className={`inline-flex items-center gap-2 backdrop-blur px-4 py-2 rounded-full ${handDetected ? 'bg-emerald-600/70' : 'bg-black/60'}`}>
-                <span className="text-xl leading-none">
-                  {HAND_ICON_FOR[currentHandInstruction.type] ?? '✋'}
-                </span>
-                <span className="text-white font-bold text-sm">
-                  {HAND_SIDE_LABELS[currentHandInstruction.hand] ?? '손'}: {
-                    currentHandInstruction.fingers?.length
-                      ? `${currentHandInstruction.fingers.map((f) => FINGER_KO[f] ?? f).join('+')} 펴기`
-                      : currentHandInstruction.label
-                  }
-                </span>
-                <span className="text-white/60 text-xs">
-                  {handDetected ? '감지됨 ✓' : `(${currentHandInstruction.duration_sec}s)`}
-                </span>
-              </div>
-            </div>
-          )}
+          {/* 상태 안내 */}
+          {detectionStatus === 'initializing' && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm pointer-events-none">
+              <div className="flex items-center gap-3">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                얼굴 인식 모델 로딩 중…
+              </div>
+            </div>
+          )}
 
-          {/* 상태 안내 */}
-          {detectionStatus === 'initializing' && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm pointer-events-none">
-              <div className="flex items-center gap-3">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                얼굴 인식 모델 로딩 중…
-              </div>
-            </div>
-          )}
+          {detectionStatus === 'no_face' && (
+            <div className="absolute bottom-3.5 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur px-4 py-2 rounded-full text-xs text-white/90 pointer-events-none">
+              📷 얼굴이 보이도록 카메라 앞에 위치해주세요
+            </div>
+          )}
 
-          {detectionStatus === 'no_face' && (
-            <div className="absolute bottom-3.5 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur px-4 py-2 rounded-full text-xs text-white/90 pointer-events-none">
-              📷 얼굴이 보이도록 카메라 앞에 위치해주세요
-            </div>
-          )}
+          {detectionStatus === 'denied' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white px-6 text-center bg-black/80">
+              <div className="text-3xl mb-2">📷</div>
+              <div className="font-bold mb-1">카메라 권한이 필요합니다</div>
+              <div className="text-xs text-white/70 mb-4">
+                브라우저 주소창의 카메라 아이콘에서 허용 후 새로고침하세요.
+              </div>
+              <button
+                onClick={onRefresh}
+                className="bg-white text-[#2563eb] px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-[#eef4ff] transition-colors"
+              >
+                다시 시도
+              </button>
+            </div>
+          )}
 
-          {detectionStatus === 'denied' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-white px-6 text-center bg-black/80">
-              <div className="text-3xl mb-2">📷</div>
-              <div className="font-bold mb-1">카메라 권한이 필요합니다</div>
-              <div className="text-xs text-white/70 mb-4">
-                브라우저 주소창의 카메라 아이콘에서 허용 후 새로고침하세요.
-              </div>
-              <button
-                onClick={onRefresh}
-                className="bg-white text-[#2563eb] px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-[#eef4ff] transition-colors"
-              >
-                다시 시도
-              </button>
-            </div>
-          )}
+          {detectionStatus === 'error' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white px-6 text-center bg-black/80">
+              <div className="text-3xl mb-2">⚠️</div>
+              <div className="font-bold mb-1">카메라를 열 수 없습니다</div>
+              <div className="text-xs text-white/70 mb-4 break-words">
+                {errorMessage || '알 수 없는 오류'}
+              </div>
+              <button
+                onClick={onRefresh}
+                className="bg-white text-[#2563eb] px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-[#eef4ff] transition-colors"
+              >
+                다시 시도
+              </button>
+            </div>
+          )}
 
-          {detectionStatus === 'error' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-white px-6 text-center bg-black/80">
-              <div className="text-3xl mb-2">⚠️</div>
-              <div className="font-bold mb-1">카메라를 열 수 없습니다</div>
-              <div className="text-xs text-white/70 mb-4 break-words">
-                {errorMessage || '알 수 없는 오류'}
-              </div>
-              <button
-                onClick={onRefresh}
-                className="bg-white text-[#2563eb] px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-[#eef4ff] transition-colors"
-              >
-                다시 시도
-              </button>
-            </div>
-          )}
+          {/* LIVE 표식 */}
+          {(detectionStatus === 'instruction_active' || detectionStatus === 'instruction_complete' || detectionStatus === 'no_face') && (
+            <div className="absolute top-3.5 right-3.5 bg-white/10 backdrop-blur px-3 py-1.5 rounded-full text-[11px] text-white/80 flex items-center gap-1.5 pointer-events-none">
+              <span className="w-1.5 h-1.5 bg-rose-400 rounded-full animate-pulse" />
+              LIVE
+            </div>
+          )}
 
-          {/* LIVE 표식 */}
-          {(detectionStatus === 'instruction_active' || detectionStatus === 'instruction_complete' || detectionStatus === 'no_face') && (
-            <div className="absolute top-3.5 right-3.5 bg-white/10 backdrop-blur px-3 py-1.5 rounded-full text-[11px] text-white/80 flex items-center gap-1.5 pointer-events-none">
-              <span className="w-1.5 h-1.5 bg-rose-400 rounded-full animate-pulse" />
-              LIVE
-            </div>
-          )}
+          {/* 라운드 통과 — 카메라 영역 전체 반투명 초록 + V체크 + 통과! (피드백4) */}
+          {roundPass && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-emerald-500/40 backdrop-blur-[2px] pointer-events-none">
+              <div className="bg-emerald-500/90 text-white text-5xl w-24 h-24 rounded-full flex items-center justify-center shadow-2xl">
+                ✓
+              </div>
+              <div className="text-white font-extrabold text-xl drop-shadow-lg">통과!</div>
+            </div>
+          )}
 
-          {/* 라운드 통과 — 카메라 영역 전체 반투명 초록 + V체크 + 통과! (피드백4) */}
-          {roundPass && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-emerald-500/40 backdrop-blur-[2px] pointer-events-none">
-              <div className="bg-emerald-500/90 text-white text-5xl w-24 h-24 rounded-full flex items-center justify-center shadow-2xl">
-                ✓
-              </div>
-              <div className="text-white font-extrabold text-xl drop-shadow-lg">통과!</div>
-            </div>
-          )}
+          {hintVisible && detectionStatus !== 'denied' && detectionStatus !== 'error' && (
+            <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-amber-400/90 text-amber-950 px-4 py-1.5 rounded-full text-xs font-bold pointer-events-none">
+              💡 천천히 또렷하게 동작해보세요
+            </div>
+          )}
+        </div>
 
-          {hintVisible && detectionStatus !== 'denied' && detectionStatus !== 'error' && (
-            <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-amber-400/90 text-amber-950 px-4 py-1.5 rounded-full text-xs font-bold pointer-events-none">
-              💡 천천히 또렷하게 동작해보세요
-            </div>
-          )}
-        </div>
+        {/* 동작 유지 게이지 (instructionProgressMs / duration_sec * 1000) */}
+        <div className="mt-3.5 mb-1">
+          <div className="flex items-center justify-between text-xs text-[#8a96ad] mb-1.5">
+            <span>현재 동작 유지</span>
+            <span className="tabular-nums font-semibold text-[#2563eb]">
+              {Math.round(progressFraction * 100)}%
+            </span>
+          </div>
+          <div className="w-full h-2 bg-[#f0f4fb] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#4a8bff] to-[#7aa9ff] rounded-full transition-all duration-150"
+              style={{ width: `${progressFraction * 100}%` }}
+            />
+          </div>
+        </div>
 
-        {/* 동작 유지 게이지 (얼굴/손 진행도의 평균값) */}
-        <div className="w-full max-w-[520px] mx-auto mt-3.5 mb-1">
-          <div className="flex items-center justify-between text-xs text-[#8a96ad] mb-1.5">
-            <span>현재 동작 유지</span>
-            <span className="tabular-nums font-semibold text-[#2563eb]">
-              {Math.round(((progressFraction + (handDetected ? (Date.now() - (handProgressStartedAtRef.current || Date.now())) / (currentHandInstruction?.duration_sec * 1000 || 1) : 0)) / 2) * 100)}%
-            </span>
-          </div>
-          <div className="w-full h-2 bg-[#f0f4fb] rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-[#4a8bff] to-[#7aa9ff] rounded-full transition-all duration-150"
-              style={{ 
-                width: `${((progressFraction + (handDetected ? Math.min(1, (Date.now() - (handProgressStartedAtRef.current || Date.now())) / (currentHandInstruction?.duration_sec * 1000 || 1)) : 0)) / 2) * 100}%` 
-              }}
-            />
-          </div>
-        </div>
+        {/* 전체 남은 시간 — 물고기 한 마리가 우측에서 좌측으로 헤엄친다 */}
+        <FishTimer
+          remainingMs={timeLeft * 1000}
+          totalMs={spec.time_limit_sec * 1000}
+          className="mt-3.5"
+        />
+      </div>
 
-        {/* 전체 남은 시간 — 물고기 한 마리가 우측에서 좌측으로 헤엄친다 */}
-        <FishTimer
-          remainingMs={timeLeft * 1000}
-          totalMs={spec.time_limit_sec * 1000}
-          className="mt-3.5"
-        />
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center justify-between px-6 py-5">
-        <div className="flex items-center gap-2 text-[#8a96ad] text-xs">
-          <span>🛡️</span>
-          <span>agami로 보호되는 페이지</span>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={onRefresh}
-            className="bg-transparent border-[1.5px] border-[#e0e7f3] text-[#6b7891] px-4 py-2 rounded-xl text-sm font-semibold hover:border-[#c8dcff] hover:text-[#4a8bff] transition-colors"
-          >
-            🔄 새로고침
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+      {/* Footer */}
+      <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-center gap-2 text-[#8a96ad] text-xs">
+          <span>🛡️</span>
+          <span>agami로 보호되는 페이지</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onRefresh}
+            className="bg-transparent border-[1.5px] border-[#e0e7f3] text-[#6b7891] px-4 py-2 rounded-xl text-sm font-semibold hover:border-[#c8dcff] hover:text-[#4a8bff] transition-colors"
+          >
+            🔄 새로고침
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 
@@ -903,34 +1169,34 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 // 메쉬 오버레이 — 현재 지시 타입에 따라 관련 부위만 노란색으로 강조
 // ---------------------------------------------------------------------------
 function drawMesh(ctx, landmarks, currentType) {
-  const FACE_OPTS = { color: COLOR_WHITE, lineWidth: 1.5 };
-  const BLUE_OPTS = { color: COLOR_BLUE, lineWidth: 1.5 };
-  const HIGHLIGHT_OPTS = { color: COLOR_YELLOW, lineWidth: 2.5 };
+  const FACE_OPTS = { color: COLOR_WHITE, lineWidth: 1.5 };
+  const BLUE_OPTS = { color: COLOR_BLUE, lineWidth: 1.5 };
+  const HIGHLIGHT_OPTS = { color: COLOR_YELLOW, lineWidth: 2.5 };
 
-  const isBlinkLeft = currentType === 'blink_left';
-  const isBlinkRight = currentType === 'blink_right';
-  const isSmile = currentType === 'smile';
-  const isHeadAction = currentType === 'turn_left'
-    || currentType === 'turn_right'
-    || currentType === 'nod';
+  const isBlinkLeft = currentType === 'blink_left';
+  const isBlinkRight = currentType === 'blink_right';
+  const isSmile = currentType === 'smile';
+  const isHeadAction = currentType === 'turn_left'
+    || currentType === 'turn_right'
+    || currentType === 'nod';
 
-  // 캔버스가 CSS scaleX(-1) 로 거울 반전되므로, MediaPipe 의 LEFT_EYE(이미지 좌측)
-  // 는 시각적으로 viewer 의 RIGHT 에 나타난다 = 사용자 관점의 RIGHT eye.
-  // 따라서 사용자 관점 highlight 매핑은 다음과 같이 뒤집어서 그린다:
-  //   사용자 LEFT eye highlight  → FACEMESH_RIGHT_EYE 에 노란색
-  //   사용자 RIGHT eye highlight → FACEMESH_LEFT_EYE  에 노란색
-  // CDN 로드 후 호출되는 콜백이라 g.drawConnectors / g.FACEMESH_* 는 항상 존재.
-  g.drawConnectors(ctx, landmarks, g.FACEMESH_FACE_OVAL, FACE_OPTS);
-  g.drawConnectors(ctx, landmarks, g.FACEMESH_LEFT_EYE, isBlinkRight ? HIGHLIGHT_OPTS : BLUE_OPTS);
-  g.drawConnectors(ctx, landmarks, g.FACEMESH_RIGHT_EYE, isBlinkLeft ? HIGHLIGHT_OPTS : BLUE_OPTS);
-  g.drawConnectors(ctx, landmarks, g.FACEMESH_LIPS, isSmile ? HIGHLIGHT_OPTS : BLUE_OPTS);
+  // 캔버스가 CSS scaleX(-1) 로 거울 반전되므로, MediaPipe 의 LEFT_EYE(이미지 좌측)
+  // 는 시각적으로 viewer 의 RIGHT 에 나타난다 = 사용자 관점의 RIGHT eye.
+  // 따라서 사용자 관점 highlight 매핑은 다음과 같이 뒤집어서 그린다:
+  //   사용자 LEFT eye highlight  → FACEMESH_RIGHT_EYE 에 노란색
+  //   사용자 RIGHT eye highlight → FACEMESH_LEFT_EYE  에 노란색
+  // CDN 로드 후 호출되는 콜백이라 g.drawConnectors / g.FACEMESH_* 는 항상 존재.
+  g.drawConnectors(ctx, landmarks, g.FACEMESH_FACE_OVAL, FACE_OPTS);
+  g.drawConnectors(ctx, landmarks, g.FACEMESH_LEFT_EYE, isBlinkRight ? HIGHLIGHT_OPTS : BLUE_OPTS);
+  g.drawConnectors(ctx, landmarks, g.FACEMESH_RIGHT_EYE, isBlinkLeft ? HIGHLIGHT_OPTS : BLUE_OPTS);
+  g.drawConnectors(ctx, landmarks, g.FACEMESH_LIPS, isSmile ? HIGHLIGHT_OPTS : BLUE_OPTS);
 
-  // 코끝 점
-  const nose = landmarks[1];
-  if (nose) {
-    ctx.beginPath();
-    ctx.arc(nose.x * ctx.canvas.width, nose.y * ctx.canvas.height, 4, 0, Math.PI * 2);
-    ctx.fillStyle = isHeadAction ? COLOR_YELLOW : COLOR_BLUE;
-    ctx.fill();
-  }
+  // 코끝 점
+  const nose = landmarks[1];
+  if (nose) {
+    ctx.beginPath();
+    ctx.arc(nose.x * ctx.canvas.width, nose.y * ctx.canvas.height, 4, 0, Math.PI * 2);
+    ctx.fillStyle = isHeadAction ? COLOR_YELLOW : COLOR_BLUE;
+    ctx.fill();
+  }
 }
