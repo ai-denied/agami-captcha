@@ -675,7 +675,7 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
     : 'shadow-[0_20px_60px_rgba(70,130,255,0.15)]';
 
   return (
-    <div className={`w-full max-w-[520px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
+    <div className={`w-full max-w-[900px] min-w-0 bg-white rounded-xl ${cardEdge} overflow-hidden mx-auto`}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#4a8bff] to-[#6da5ff] text-white">
         <div className="flex items-center gap-3">
@@ -698,18 +698,36 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
 
       {/* Body */}
       <div className="px-6 pt-5">
-        {/* 단계 카운터 */}
+        {/* 진행도 바 */}
+        <div className="flex gap-2 mb-2">
+          {Array.from({ length: totalSteps }).map((_, i) => (
+            <div
+              key={i}
+              className={`flex-1 h-1.5 rounded-full transition-colors ${
+                i < currentInstructionIndex
+                  ? 'bg-[#4a8bff]'
+                  : i === currentInstructionIndex
+                    ? 'bg-[#9ec3ff]'
+                    : 'bg-[#e0e7f3]'
+              }`}
+            />
+          ))}
+        </div>
+        <div className="text-xs text-[#8a96ad] mb-3">
+          진행 <span className="font-bold text-[#2563eb]">{Math.min(currentInstructionIndex + 1, totalSteps)}</span> / {totalSteps}
+        </div>
+
         <div className="flex items-center justify-between mb-3.5">
-          <div className="text-xs text-[#8a96ad] font-semibold uppercase tracking-wide">
-            진행 상태
-          </div>
-          <div className="text-sm font-bold text-[#1d2a44] tabular-nums">
-            {Math.min(currentInstructionIndex + 1, totalSteps)}<span className="text-[#8a96ad]">/{totalSteps}</span> 문제
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs text-[#8a96ad] font-semibold uppercase tracking-wide">수행할 동작</span>
+            <div className="inline-flex items-center gap-2 bg-[#eef4ff] border-[1.5px] border-[#c8dcff] px-3.5 py-1.5 rounded-full">
+              <span className="font-bold text-[#2563eb] text-sm">{currentInstruction?.label || '완료'}</span>
+            </div>
           </div>
         </div>
 
         {/* 카메라 영역 */}
-        <div className="relative w-full aspect-square bg-[#0a0a14] rounded-lg overflow-hidden border-2 border-[#1a1a28]">
+        <div className="relative w-full max-w-[520px] aspect-square mx-auto bg-[#0a0a14] rounded-lg overflow-hidden border-2 border-[#1a1a28]">
           <video
             ref={videoRef}
             autoPlay
@@ -835,18 +853,20 @@ export default function FaceMissionCaptcha({ spec, onSubmit, onRefresh, embedded
           )}
         </div>
 
-        {/* 동작 유지 게이지 (instructionProgressMs / duration_sec * 1000) */}
-        <div className="mt-3.5 mb-1">
+        {/* 동작 유지 게이지 (얼굴/손 진행도의 평균값) */}
+        <div className="w-full max-w-[520px] mx-auto mt-3.5 mb-1">
           <div className="flex items-center justify-between text-xs text-[#8a96ad] mb-1.5">
             <span>현재 동작 유지</span>
             <span className="tabular-nums font-semibold text-[#2563eb]">
-              {Math.round(progressFraction * 100)}%
+              {Math.round(((progressFraction + (handDetected ? (Date.now() - (handProgressStartedAtRef.current || Date.now())) / (currentHandInstruction?.duration_sec * 1000 || 1) : 0)) / 2) * 100)}%
             </span>
           </div>
           <div className="w-full h-2 bg-[#f0f4fb] rounded-full overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-[#4a8bff] to-[#7aa9ff] rounded-full transition-all duration-150"
-              style={{ width: `${progressFraction * 100}%` }}
+              style={{ 
+                width: `${((progressFraction + (handDetected ? Math.min(1, (Date.now() - (handProgressStartedAtRef.current || Date.now())) / (currentHandInstruction?.duration_sec * 1000 || 1)) : 0)) / 2) * 100}%` 
+              }}
             />
           </div>
         </div>
